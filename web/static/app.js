@@ -313,10 +313,12 @@ function applyControlState(data) {
     document.getElementById('btn-pause').textContent = paused ? 'Resume' : 'Pause';
 }
 
-// live-view counts trip events. It gets no event when a rider gives up or a
-// driver cancels, so it shows raw counts rather than a queue length.
+// live-view derives the queue and ride counts from trip events.
 function updateCounters(c) {
     document.getElementById('requested').textContent = c.requested || 0;
+    document.getElementById('pending-requests').textContent = c.pending || 0;
+    document.getElementById('active-rides').textContent = c.active || 0;
+    document.getElementById('abandoned').textContent = c.abandoned || 0;
     document.getElementById('total-rides').textContent = c.completed || 0;
 }
 

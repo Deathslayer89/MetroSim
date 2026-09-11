@@ -14,6 +14,8 @@ const (
 	TopicTripMatched          = "trip.matched"
 	TopicTripPickedUp         = "trip.picked_up"
 	TopicTripCompleted        = "trip.completed"
+	TopicTripAbandoned        = "trip.abandoned"
+	TopicTripCancelled        = "trip.cancelled"
 	TopicDriverLocationUpdate = "driver.location_update"
 	TopicSurgeUpdated         = "surge.updated"
 )

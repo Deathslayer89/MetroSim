@@ -251,12 +251,19 @@ func (d *Dispatcher) Tick(vehicles map[int]*agent.Vehicle, currentTime time.Time
 	d.mu.Lock()
 	// Publish after unlocking: a MemoryBus subscriber runs on this goroutine
 	// and would deadlock if it called back into the dispatcher.
-	d.expireStale(currentTime)
-	pickupEvents, completedEvents := d.updateActiveRides(vehicles, currentTime, edgeWeights)
+	abandonedEvents := d.expireStale(currentTime)
+	cancelledEvents, pickupEvents, completedEvents := d.updateActiveRides(vehicles, currentTime, edgeWeights)
 	matchedEvents := d.runMatching(vehicles, currentTime, edgeWeights)
 	d.repositionIdle(vehicles, currentTime, edgeWeights)
 	d.mu.Unlock()
 
+	for _, e := range abandonedEvents {
+		_ = events.PublishTripAbandoned(d.bus, e)
+	}
+	// A cancelled request can be rematched this tick, so this goes out first.
+	for _, e := range cancelledEvents {
+		_ = events.PublishTripCancelled(d.bus, e)
+	}
 	for _, e := range pickupEvents {
 		_ = events.PublishTripPickedUp(d.bus, e)
 	}
@@ -268,21 +275,32 @@ func (d *Dispatcher) Tick(vehicles map[int]*agent.Vehicle, currentTime time.Time
 	}
 }
 
-// expireStale drops requests older than maxWait and keeps the queue's order.
-// It needs d.mu held.
-func (d *Dispatcher) expireStale(now time.Time) {
+// expireStale drops requests older than maxWait, keeping the queue's order,
+// and returns an event for each. It needs d.mu held.
+func (d *Dispatcher) expireStale(now time.Time) []*eventspb.TripAbandoned {
 	if d.maxWait <= 0 || len(d.pendingQueue) == 0 {
-		return
+		return nil
 	}
+	var out []*eventspb.TripAbandoned
 	kept := d.pendingQueue[:0]
 	for _, req := range d.pendingQueue {
-		if now.Sub(req.RequestTime) > d.maxWait {
-			d.abandoned++
+		waited := now.Sub(req.RequestTime)
+		if waited <= d.maxWait {
+			kept = append(kept, req)
 			continue
 		}
-		kept = append(kept, req)
+		d.abandoned++
+		meta := d.stamper.MetaFor(now)
+		meta.PartitionKey = d.pickupKey(req.ID, req.PickupNode)
+		out = append(out, &eventspb.TripAbandoned{
+			Meta:       meta,
+			RequestId:  int64(req.ID),
+			PickupNode: int64(req.PickupNode),
+			WaitedS:    waited.Seconds(),
+		})
 	}
 	d.pendingQueue = kept
+	return out
 }
 
 // runMatching returns the TripMatched payloads to publish after d.mu is released.
@@ -374,7 +392,8 @@ func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime ti
 
 // updateActiveRides advances each ride and returns the events to publish once
 // d.mu is released.
-func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentTime time.Time, edgeWeights map[int]float64) ([]*eventspb.TripPickedUp, []*eventspb.TripCompleted) {
+func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentTime time.Time, edgeWeights map[int]float64) ([]*eventspb.TripCancelled, []*eventspb.TripPickedUp, []*eventspb.TripCompleted) {
+	var cancels []*eventspb.TripCancelled
 	var pickups []*eventspb.TripPickedUp
 	var completes []*eventspb.TripCompleted
 	// Ride-ID order keeps RNG draws and completion order the same every run.
@@ -395,6 +414,14 @@ func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentT
 				ride.Request.AssignedDriver = 0
 				d.pendingQueue = append(d.pendingQueue, ride.Request)
 				delete(d.activeRides, rideID)
+				meta := d.stamper.MetaFor(currentTime)
+				meta.PartitionKey = d.pickupKey(ride.Request.ID, ride.Request.PickupNode)
+				cancels = append(cancels, &eventspb.TripCancelled{
+					Meta:      meta,
+					RideId:    int64(ride.ID),
+					RequestId: int64(ride.Request.ID),
+					DriverId:  int64(driver.ID),
+				})
 				continue
 			}
 			if driver.IsIdle() && driver.CurrentNode == ride.Request.PickupNode {
@@ -453,7 +480,7 @@ func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentT
 			}
 		}
 	}
-	return pickups, completes
+	return cancels, pickups, completes
 }
 
 func (d *Dispatcher) GetPendingCount() int {

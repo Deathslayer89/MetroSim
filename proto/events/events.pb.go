@@ -497,6 +497,145 @@ func (x *TripCompleted) GetEtaPredictedS() float64 {
 	return 0
 }
 
+// A rider gave up on a request left unmatched past --max-wait.
+type TripAbandoned struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meta          *Meta                  `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
+	RequestId     int64                  `protobuf:"varint,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	PickupNode    int64                  `protobuf:"varint,3,opt,name=pickup_node,json=pickupNode,proto3" json:"pickup_node,omitempty"`
+	WaitedS       float64                `protobuf:"fixed64,4,opt,name=waited_s,json=waitedS,proto3" json:"waited_s,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TripAbandoned) Reset() {
+	*x = TripAbandoned{}
+	mi := &file_proto_events_events_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TripAbandoned) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TripAbandoned) ProtoMessage() {}
+
+func (x *TripAbandoned) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_events_events_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TripAbandoned.ProtoReflect.Descriptor instead.
+func (*TripAbandoned) Descriptor() ([]byte, []int) {
+	return file_proto_events_events_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *TripAbandoned) GetMeta() *Meta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
+func (x *TripAbandoned) GetRequestId() int64 {
+	if x != nil {
+		return x.RequestId
+	}
+	return 0
+}
+
+func (x *TripAbandoned) GetPickupNode() int64 {
+	if x != nil {
+		return x.PickupNode
+	}
+	return 0
+}
+
+func (x *TripAbandoned) GetWaitedS() float64 {
+	if x != nil {
+		return x.WaitedS
+	}
+	return 0
+}
+
+// A driver dropped a ride before pickup. The request goes back in the queue
+// and can be matched again under a new ride_id.
+type TripCancelled struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meta          *Meta                  `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
+	RideId        int64                  `protobuf:"varint,2,opt,name=ride_id,json=rideId,proto3" json:"ride_id,omitempty"`
+	RequestId     int64                  `protobuf:"varint,3,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	DriverId      int64                  `protobuf:"varint,4,opt,name=driver_id,json=driverId,proto3" json:"driver_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TripCancelled) Reset() {
+	*x = TripCancelled{}
+	mi := &file_proto_events_events_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TripCancelled) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TripCancelled) ProtoMessage() {}
+
+func (x *TripCancelled) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_events_events_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TripCancelled.ProtoReflect.Descriptor instead.
+func (*TripCancelled) Descriptor() ([]byte, []int) {
+	return file_proto_events_events_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *TripCancelled) GetMeta() *Meta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
+func (x *TripCancelled) GetRideId() int64 {
+	if x != nil {
+		return x.RideId
+	}
+	return 0
+}
+
+func (x *TripCancelled) GetRequestId() int64 {
+	if x != nil {
+		return x.RequestId
+	}
+	return 0
+}
+
+func (x *TripCancelled) GetDriverId() int64 {
+	if x != nil {
+		return x.DriverId
+	}
+	return 0
+}
+
 type DriverLocationUpdate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *Meta                  `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
@@ -510,7 +649,7 @@ type DriverLocationUpdate struct {
 
 func (x *DriverLocationUpdate) Reset() {
 	*x = DriverLocationUpdate{}
-	mi := &file_proto_events_events_proto_msgTypes[5]
+	mi := &file_proto_events_events_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -522,7 +661,7 @@ func (x *DriverLocationUpdate) String() string {
 func (*DriverLocationUpdate) ProtoMessage() {}
 
 func (x *DriverLocationUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_events_events_proto_msgTypes[5]
+	mi := &file_proto_events_events_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -535,7 +674,7 @@ func (x *DriverLocationUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriverLocationUpdate.ProtoReflect.Descriptor instead.
 func (*DriverLocationUpdate) Descriptor() ([]byte, []int) {
-	return file_proto_events_events_proto_rawDescGZIP(), []int{5}
+	return file_proto_events_events_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DriverLocationUpdate) GetMeta() *Meta {
@@ -584,7 +723,7 @@ type SurgeUpdated struct {
 
 func (x *SurgeUpdated) Reset() {
 	*x = SurgeUpdated{}
-	mi := &file_proto_events_events_proto_msgTypes[6]
+	mi := &file_proto_events_events_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -596,7 +735,7 @@ func (x *SurgeUpdated) String() string {
 func (*SurgeUpdated) ProtoMessage() {}
 
 func (x *SurgeUpdated) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_events_events_proto_msgTypes[6]
+	mi := &file_proto_events_events_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,7 +748,7 @@ func (x *SurgeUpdated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SurgeUpdated.ProtoReflect.Descriptor instead.
 func (*SurgeUpdated) Descriptor() ([]byte, []int) {
-	return file_proto_events_events_proto_rawDescGZIP(), []int{6}
+	return file_proto_events_events_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SurgeUpdated) GetMeta() *Meta {
@@ -691,7 +830,20 @@ const file_proto_events_events_proto_rawDesc = "" +
 	"\vdropoff_lon\x18\x0e \x01(\x01R\n" +
 	"dropoffLon\x12$\n" +
 	"\x0esurge_at_match\x18\x0f \x01(\x01R\fsurgeAtMatch\x12&\n" +
-	"\x0feta_predicted_s\x18\x10 \x01(\x01R\retaPredictedS\"\x9b\x01\n" +
+	"\x0feta_predicted_s\x18\x10 \x01(\x01R\retaPredictedS\"\x98\x01\n" +
+	"\rTripAbandoned\x12,\n" +
+	"\x04meta\x18\x01 \x01(\v2\x18.metrosim.events.v1.MetaR\x04meta\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\x03R\trequestId\x12\x1f\n" +
+	"\vpickup_node\x18\x03 \x01(\x03R\n" +
+	"pickupNode\x12\x19\n" +
+	"\bwaited_s\x18\x04 \x01(\x01R\awaitedS\"\x92\x01\n" +
+	"\rTripCancelled\x12,\n" +
+	"\x04meta\x18\x01 \x01(\v2\x18.metrosim.events.v1.MetaR\x04meta\x12\x17\n" +
+	"\aride_id\x18\x02 \x01(\x03R\x06rideId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x03 \x01(\x03R\trequestId\x12\x1b\n" +
+	"\tdriver_id\x18\x04 \x01(\x03R\bdriverId\"\x9b\x01\n" +
 	"\x14DriverLocationUpdate\x12,\n" +
 	"\x04meta\x18\x01 \x01(\v2\x18.metrosim.events.v1.MetaR\x04meta\x12\x1b\n" +
 	"\tdriver_id\x18\x02 \x01(\x03R\bdriverId\x12\x10\n" +
@@ -717,34 +869,38 @@ func file_proto_events_events_proto_rawDescGZIP() []byte {
 	return file_proto_events_events_proto_rawDescData
 }
 
-var file_proto_events_events_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_proto_events_events_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_proto_events_events_proto_goTypes = []any{
 	(*Meta)(nil),                  // 0: metrosim.events.v1.Meta
 	(*TripRequested)(nil),         // 1: metrosim.events.v1.TripRequested
 	(*TripMatched)(nil),           // 2: metrosim.events.v1.TripMatched
 	(*TripPickedUp)(nil),          // 3: metrosim.events.v1.TripPickedUp
 	(*TripCompleted)(nil),         // 4: metrosim.events.v1.TripCompleted
-	(*DriverLocationUpdate)(nil),  // 5: metrosim.events.v1.DriverLocationUpdate
-	(*SurgeUpdated)(nil),          // 6: metrosim.events.v1.SurgeUpdated
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
+	(*TripAbandoned)(nil),         // 5: metrosim.events.v1.TripAbandoned
+	(*TripCancelled)(nil),         // 6: metrosim.events.v1.TripCancelled
+	(*DriverLocationUpdate)(nil),  // 7: metrosim.events.v1.DriverLocationUpdate
+	(*SurgeUpdated)(nil),          // 8: metrosim.events.v1.SurgeUpdated
+	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
 }
 var file_proto_events_events_proto_depIdxs = []int32{
-	7,  // 0: metrosim.events.v1.Meta.time:type_name -> google.protobuf.Timestamp
+	9,  // 0: metrosim.events.v1.Meta.time:type_name -> google.protobuf.Timestamp
 	0,  // 1: metrosim.events.v1.TripRequested.meta:type_name -> metrosim.events.v1.Meta
 	0,  // 2: metrosim.events.v1.TripMatched.meta:type_name -> metrosim.events.v1.Meta
 	0,  // 3: metrosim.events.v1.TripPickedUp.meta:type_name -> metrosim.events.v1.Meta
 	0,  // 4: metrosim.events.v1.TripCompleted.meta:type_name -> metrosim.events.v1.Meta
-	7,  // 5: metrosim.events.v1.TripCompleted.request_time:type_name -> google.protobuf.Timestamp
-	7,  // 6: metrosim.events.v1.TripCompleted.match_time:type_name -> google.protobuf.Timestamp
-	7,  // 7: metrosim.events.v1.TripCompleted.pickup_time:type_name -> google.protobuf.Timestamp
-	7,  // 8: metrosim.events.v1.TripCompleted.dropoff_time:type_name -> google.protobuf.Timestamp
-	0,  // 9: metrosim.events.v1.DriverLocationUpdate.meta:type_name -> metrosim.events.v1.Meta
-	0,  // 10: metrosim.events.v1.SurgeUpdated.meta:type_name -> metrosim.events.v1.Meta
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	9,  // 5: metrosim.events.v1.TripCompleted.request_time:type_name -> google.protobuf.Timestamp
+	9,  // 6: metrosim.events.v1.TripCompleted.match_time:type_name -> google.protobuf.Timestamp
+	9,  // 7: metrosim.events.v1.TripCompleted.pickup_time:type_name -> google.protobuf.Timestamp
+	9,  // 8: metrosim.events.v1.TripCompleted.dropoff_time:type_name -> google.protobuf.Timestamp
+	0,  // 9: metrosim.events.v1.TripAbandoned.meta:type_name -> metrosim.events.v1.Meta
+	0,  // 10: metrosim.events.v1.TripCancelled.meta:type_name -> metrosim.events.v1.Meta
+	0,  // 11: metrosim.events.v1.DriverLocationUpdate.meta:type_name -> metrosim.events.v1.Meta
+	0,  // 12: metrosim.events.v1.SurgeUpdated.meta:type_name -> metrosim.events.v1.Meta
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_proto_events_events_proto_init() }
@@ -758,7 +914,7 @@ func file_proto_events_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_events_events_proto_rawDesc), len(file_proto_events_events_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

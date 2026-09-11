@@ -1,7 +1,15 @@
 package dispatcher
 
 import (
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/Deathslayer89/MetroSim/internal/agent"
+	"github.com/Deathslayer89/MetroSim/internal/events"
+	"github.com/Deathslayer89/MetroSim/internal/graph"
+	"github.com/Deathslayer89/MetroSim/internal/pathfinding"
+	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
 func TestDriverBehaviorInertByDefault(t *testing.T) {
@@ -84,5 +92,50 @@ func TestCancelRateDeterministic(t *testing.T) {
 	}
 	if again != cancels {
 		t.Errorf("same seed: %d cancels, then %d", cancels, again)
+	}
+}
+
+// A cancelled request can be matched again in the same tick, so its
+// TripCancelled has to go out before the new TripMatched.
+func TestCancelPublishedBeforeRematch(t *testing.T) {
+	g, err := graph.LoadGraphFromCSV("../../data/graphs/test_nodes.csv", "../../data/graphs/test_edges.csv")
+	if err != nil {
+		t.Fatalf("load graph: %v", err)
+	}
+	planner := pathfinding.NewPathPlanner(g, graph.EuclideanDistance)
+	bus := events.NewMemoryBus()
+	d := NewDispatcher(g, planner, bus, events.NewStamper(events.RunInfo{}))
+	d.SetDriverBehavior(DriverBehavior{CancelRate: 1}, 1)
+
+	var order []string
+	var matched []*eventspb.TripMatched
+	var cancelled []*eventspb.TripCancelled
+	if err := events.SubscribeTripMatched(bus, "test", func(e *eventspb.TripMatched) {
+		order = append(order, "matched")
+		matched = append(matched, e)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := events.SubscribeTripCancelled(bus, "test", func(e *eventspb.TripCancelled) {
+		order = append(order, "cancelled")
+		cancelled = append(cancelled, e)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	vehicles := map[int]*agent.Vehicle{1: agent.NewVehicle(1, 0, g, planner)}
+	t0 := time.Unix(1_700_000_000, 0)
+	d.SubmitRequest(&Request{ID: 7, PickupNode: 1, DestinationNode: 8, RequestTime: t0})
+	d.Tick(vehicles, t0, nil)
+	d.Tick(vehicles, t0.Add(100*time.Millisecond), nil)
+
+	if got := strings.Join(order, ","); got != "matched,cancelled,matched" {
+		t.Fatalf("events %q, want matched,cancelled,matched", got)
+	}
+	if c := cancelled[0]; c.RideId != matched[0].RideId || c.RequestId != 7 || c.DriverId != 1 {
+		t.Errorf("cancel %v doesn't describe the first ride %v", c, matched[0])
+	}
+	if matched[1].RideId == matched[0].RideId || matched[1].RequestId != 7 {
+		t.Errorf("want request 7 rematched under a new ride, got %v", matched[1])
 	}
 }

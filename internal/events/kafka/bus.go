@@ -274,6 +274,10 @@ func decoderFor(topic string) (func() proto.Message, bool) {
 		return func() proto.Message { return &eventspb.TripPickedUp{} }, true
 	case events.TopicTripCompleted:
 		return func() proto.Message { return &eventspb.TripCompleted{} }, true
+	case events.TopicTripAbandoned:
+		return func() proto.Message { return &eventspb.TripAbandoned{} }, true
+	case events.TopicTripCancelled:
+		return func() proto.Message { return &eventspb.TripCancelled{} }, true
 	case events.TopicDriverLocationUpdate:
 		return func() proto.Message { return &eventspb.DriverLocationUpdate{} }, true
 	case events.TopicSurgeUpdated:

@@ -64,6 +64,23 @@ message TripCompleted {
   double eta_predicted_s = 16; // model's trip-duration prediction at match time; 0 if no model loaded
 }
 
+// A rider gave up on a request left unmatched past --max-wait.
+message TripAbandoned {
+  Meta meta = 1;
+  int64 request_id = 2;
+  int64 pickup_node = 3;
+  double waited_s = 4;
+}
+
+// A driver dropped a ride before pickup. The request goes back in the queue
+// and can be matched again under a new ride_id.
+message TripCancelled {
+  Meta meta = 1;
+  int64 ride_id = 2;
+  int64 request_id = 3;
+  int64 driver_id = 4;
+}
+
 message DriverLocationUpdate {
   Meta meta = 1;
   int64 driver_id = 2;

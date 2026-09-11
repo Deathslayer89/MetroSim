@@ -92,6 +92,24 @@ func SubscribeTripCompletedBatched(bus Bus, group string, onRecord func(*eventsp
 	}, onBatchEnd)
 }
 
+func PublishTripAbandoned(bus Bus, msg *eventspb.TripAbandoned) error {
+	return bus.Publish(TopicTripAbandoned, msg)
+}
+func SubscribeTripAbandoned(bus Bus, group string, fn func(*eventspb.TripAbandoned)) error {
+	return bus.Subscribe(TopicTripAbandoned, group, func(m proto.Message) {
+		fn(m.(*eventspb.TripAbandoned))
+	})
+}
+
+func PublishTripCancelled(bus Bus, msg *eventspb.TripCancelled) error {
+	return bus.Publish(TopicTripCancelled, msg)
+}
+func SubscribeTripCancelled(bus Bus, group string, fn func(*eventspb.TripCancelled)) error {
+	return bus.Subscribe(TopicTripCancelled, group, func(m proto.Message) {
+		fn(m.(*eventspb.TripCancelled))
+	})
+}
+
 func PublishDriverLocationUpdate(bus Bus, msg *eventspb.DriverLocationUpdate) error {
 	return bus.Publish(TopicDriverLocationUpdate, msg)
 }

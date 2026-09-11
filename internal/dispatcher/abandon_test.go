@@ -8,6 +8,7 @@ import (
 	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
 	"github.com/Deathslayer89/MetroSim/internal/pathfinding"
+	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
 // A request with no drivers available abandons the queue once it waits past
@@ -18,8 +19,13 @@ func TestRequestAbandonsAfterMaxWait(t *testing.T) {
 		t.Fatalf("load graph: %v", err)
 	}
 	planner := pathfinding.NewPathPlanner(g, graph.EuclideanDistance)
-	d := NewDispatcher(g, planner, events.NewMemoryBus(), events.NewStamper(events.RunInfo{}))
+	bus := events.NewMemoryBus()
+	d := NewDispatcher(g, planner, bus, events.NewStamper(events.RunInfo{}))
 	d.SetMaxWait(60 * time.Second)
+	var gaveUp []*eventspb.TripAbandoned
+	if err := events.SubscribeTripAbandoned(bus, "test", func(e *eventspb.TripAbandoned) { gaveUp = append(gaveUp, e) }); err != nil {
+		t.Fatal(err)
+	}
 
 	t0 := time.Unix(1_700_000_000, 0)
 	d.SubmitRequest(&Request{ID: 1, PickupNode: 1, DestinationNode: 8, RequestTime: t0})
@@ -36,6 +42,9 @@ func TestRequestAbandonsAfterMaxWait(t *testing.T) {
 	d.Tick(noDrivers, t0.Add(90*time.Second), nil)
 	if d.GetPendingCount() != 0 || d.AbandonedCount() != 1 {
 		t.Errorf("at 90s want pending=0 abandoned=1, got pending=%d abandoned=%d", d.GetPendingCount(), d.AbandonedCount())
+	}
+	if len(gaveUp) != 1 || gaveUp[0].RequestId != 1 || gaveUp[0].WaitedS != 90 {
+		t.Errorf("want one TripAbandoned for request 1 after 90 s, got %v", gaveUp)
 	}
 }
 

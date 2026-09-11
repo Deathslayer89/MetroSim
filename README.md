@@ -32,11 +32,11 @@ Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arriv
 
 Demand comes from scenario files: a piecewise-linear arrival rate, Poisson arrivals, and hotspots that each take a stated share of pickups or dropoffs. The seed fixes everything, so two runs with the same seed produce identical trips, and a test checks exactly that.
 
-Every request, match, pickup, dropoff, driver position and surge change is a proto3 event. Inside one process they go over a synchronous in-memory bus. With `--bus=kafka` they go to Kafka instead, where three services pick them up:
+Every step of a trip (request, match, cancellation, pickup, dropoff, abandonment), every driver position and every surge change is a proto3 event. Inside one process they go over a synchronous in-memory bus. With `--bus=kafka` they go to Kafka instead, where three services pick them up:
 
 - `trace-writer` turns each consumed batch into its own Parquet file and commits offsets only once the file is complete. If it dies mid-batch, Kafka redelivers and the trips already on disk are skipped.
 - `metrics-aggregator` serves Prometheus metrics. Run two and they split the partitions; Prometheus adds them up.
-- `live-view` rebuilds positions, surge and trip counts from the events and pushes them to the browser.
+- `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser.
 
 Smaller pieces: surge per H3 resolution-8 cell (open requests over idle drivers, clamped to 1x to 3x, smoothed over 60 s), optional driver declines and cancellations, riders who give up after `--max-wait`, a Grafana dashboard definition, and a ridge-regression ETA model. The ETA model is a baseline. Trained on 2,000 routed pairs it predicts free-flow trip time with an in-sample R² of 0.89, nearly all of it from distance. Surge and the ETA model can both feed into batch matching (`--surge-premium`, `--eta-weight`); both are off by default and off in the headline.
 

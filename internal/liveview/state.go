@@ -27,12 +27,25 @@ type SurgeCell struct {
 	Multiplier float64     `json:"multiplier"`
 }
 
-// Counters tracks rolling totals derived from trip lifecycle events.
+// Counters tracks rolling totals derived from trip lifecycle events. A
+// cancelled ride's request goes back in the queue and an abandoned one leaves
+// it, so Pending and Active, derived from the rest, match the dispatcher's own
+// counts once every topic has been read to the same point.
 type Counters struct {
 	Requested int `json:"requested"`
 	Matched   int `json:"matched"`
 	PickedUp  int `json:"picked_up"`
 	Completed int `json:"completed"`
+	Abandoned int `json:"abandoned"`
+	Cancelled int `json:"cancelled"`
+	Pending   int `json:"pending"`
+	Active    int `json:"active"`
+}
+
+func (c Counters) derived() Counters {
+	c.Pending = c.Requested - c.Matched + c.Cancelled - c.Abandoned
+	c.Active = c.Matched - c.Cancelled - c.Completed
+	return c
 }
 
 // State is the marketplace's in-memory projection from the event stream.
@@ -52,41 +65,37 @@ func NewState() *State {
 }
 
 // SubscribeToBus wires this State to the bus under the "live-view" consumer
-// group. Subscribes to driver locations, surge updates, and the four trip
-// lifecycle topics.
+// group: driver locations, surge updates, and every trip lifecycle topic.
 func (s *State) SubscribeToBus(bus events.Bus) error {
-	if err := events.SubscribeDriverLocationUpdate(bus, "live-view", s.onDriverLocation); err != nil {
-		return err
-	}
-	if err := events.SubscribeSurgeUpdated(bus, "live-view", s.onSurge); err != nil {
-		return err
-	}
-	if err := events.SubscribeTripRequested(bus, "live-view", func(*eventspb.TripRequested) {
+	const group = "live-view"
+	c := &s.counters
+	inc := func(n *int) {
 		s.mu.Lock()
-		s.counters.Requested++
+		*n++
 		s.mu.Unlock()
-	}); err != nil {
+	}
+	if err := events.SubscribeDriverLocationUpdate(bus, group, s.onDriverLocation); err != nil {
 		return err
 	}
-	if err := events.SubscribeTripMatched(bus, "live-view", func(*eventspb.TripMatched) {
-		s.mu.Lock()
-		s.counters.Matched++
-		s.mu.Unlock()
-	}); err != nil {
+	if err := events.SubscribeSurgeUpdated(bus, group, s.onSurge); err != nil {
 		return err
 	}
-	if err := events.SubscribeTripPickedUp(bus, "live-view", func(*eventspb.TripPickedUp) {
-		s.mu.Lock()
-		s.counters.PickedUp++
-		s.mu.Unlock()
-	}); err != nil {
+	if err := events.SubscribeTripRequested(bus, group, func(*eventspb.TripRequested) { inc(&c.Requested) }); err != nil {
 		return err
 	}
-	return events.SubscribeTripCompleted(bus, "live-view", func(*eventspb.TripCompleted) {
-		s.mu.Lock()
-		s.counters.Completed++
-		s.mu.Unlock()
-	})
+	if err := events.SubscribeTripMatched(bus, group, func(*eventspb.TripMatched) { inc(&c.Matched) }); err != nil {
+		return err
+	}
+	if err := events.SubscribeTripPickedUp(bus, group, func(*eventspb.TripPickedUp) { inc(&c.PickedUp) }); err != nil {
+		return err
+	}
+	if err := events.SubscribeTripCompleted(bus, group, func(*eventspb.TripCompleted) { inc(&c.Completed) }); err != nil {
+		return err
+	}
+	if err := events.SubscribeTripAbandoned(bus, group, func(*eventspb.TripAbandoned) { inc(&c.Abandoned) }); err != nil {
+		return err
+	}
+	return events.SubscribeTripCancelled(bus, group, func(*eventspb.TripCancelled) { inc(&c.Cancelled) })
 }
 
 func (s *State) onDriverLocation(e *eventspb.DriverLocationUpdate) {
@@ -138,7 +147,7 @@ func (s *State) Snapshot() Snapshot {
 		Time:     s.lastSeen.UTC().Format(time.RFC3339Nano),
 		Vehicles: make([]Vehicle, 0, len(s.vehicles)),
 		Surge:    make([]SurgeCell, 0, len(s.surge)),
-		Counters: s.counters,
+		Counters: s.counters.derived(),
 	}
 	for _, v := range s.vehicles {
 		out.Vehicles = append(out.Vehicles, v)

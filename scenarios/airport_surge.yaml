@@ -1,0 +1,23 @@
+name: airport_surge
+description: Late flights land at SFO; most pickups are at the airport, headed into the city, far more than 80 cars can carry
+duration: 1800s
+seed: 7
+start_time: 2026-03-02T22:30:00-08:00
+
+vehicles:
+  count: 80
+  spawn: random
+
+arrivals:
+  rate_segments:
+    - { t: 0s,    rate: 0.02 }
+    - { t: 300s,  rate: 0.08 }
+    - { t: 900s,  rate: 0.12 }
+    - { t: 1500s, rate: 0.05 }
+    - { t: 1800s, rate: 0.02 }
+  pickup_hotspots:
+    - { name: sfo, lat: 37.6213, lon: -122.3790, radius_m: 1500, weight: 10 }
+  dropoff_hotspots:
+    - { name: downtown, lat: 37.7900, lon: -122.4050, radius_m: 1500, weight: 3 }
+    - { name: mission,  lat: 37.7600, lon: -122.4180, radius_m: 1200, weight: 2 }
+    - { name: marina,   lat: 37.8030, lon: -122.4380, radius_m: 1200, weight: 2 }

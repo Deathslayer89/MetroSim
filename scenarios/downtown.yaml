@@ -1,0 +1,22 @@
+name: downtown
+description: Evening rides; pickups mostly in the Financial District, SoMa, the Mission and the Marina, dropoffs mostly within 3 km of downtown
+duration: 3600s
+seed: 1
+start_time: 2026-03-02T17:00:00-08:00
+
+vehicles:
+  count: 180
+  spawn: pickups
+
+arrivals:
+  rate_segments:
+    - { t: 0s,    rate: 0.12 }
+    - { t: 3600s, rate: 0.12 }
+  pickup_hotspots:
+    - { name: financial_district, lat: 37.7946, lon: -122.3999, radius_m: 1000, weight: 3 }
+    - { name: soma,               lat: 37.7785, lon: -122.4056, radius_m: 1200, weight: 3 }
+    - { name: mission,            lat: 37.7599, lon: -122.4148, radius_m: 1200, weight: 2 }
+    - { name: marina,             lat: 37.8030, lon: -122.4380, radius_m: 1000, weight: 1 }
+  dropoff_hotspots:
+    - { name: downtown, lat: 37.7880, lon: -122.4075, radius_m: 3000, weight: 6 }
+    - { name: city,     lat: 37.7600, lon: -122.4400, radius_m: 6000, weight: 3 }

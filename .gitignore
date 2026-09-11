@@ -1,0 +1,18 @@
+data/osm/*.osm.pbf
+data/osm/*.tmp
+traces/
+*.parquet
+/metrosim
+
+# Binaries from `make build` or `go build ./cmd/<name>`.
+/bin/
+/experiment
+/trace-writer
+/metrics-aggregator
+/live-view
+/replay
+/train-eta
+
+# Experiment runs; only experiments/headline/ is tracked.
+experiments/*
+!experiments/headline/

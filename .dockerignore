@@ -1,0 +1,5 @@
+.git
+bin
+traces
+experiments
+data/osm/*.pbf

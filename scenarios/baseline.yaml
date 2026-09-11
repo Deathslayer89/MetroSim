@@ -1,0 +1,14 @@
+name: baseline
+description: Uniform demand over the whole extract, no hotspots
+duration: 1800s
+seed: 1
+start_time: 2026-03-02T08:00:00-08:00
+
+vehicles:
+  count: 100
+  spawn: random
+
+arrivals:
+  rate_segments:
+    - { t: 0s,    rate: 0.05 }
+    - { t: 1800s, rate: 0.05 }

@@ -1,0 +1,79 @@
+// MetroSim event schema.
+//
+// The version lives in the package name, metrosim.events.v1, so a v2 schema can
+// sit alongside it. A removed field's number is reserved, never reused.
+
+syntax = "proto3";
+
+package metrosim.events.v1;
+
+option go_package = "github.com/Deathslayer89/MetroSim/proto/events;eventspb";
+
+import "google/protobuf/timestamp.proto";
+
+// Meta is stamped on every event so a downstream consumer can filter, join,
+// or partition without parsing the payload-specific fields.
+message Meta {
+  uint64 event_id = 1;                          // monotonic per-publisher; stable across retries
+  google.protobuf.Timestamp time = 2;           // sim time at publish
+  string scenario = 3;                          // scenario name (e.g. "morning_rush")
+  string policy = 4;                            // greedy, batch or region-sharded
+  int64 seed = 5;                               // scenario seed, for joining replicates
+  string partition_key = 6;                     // Kafka partition key; MemoryBus ignores
+}
+
+message TripRequested {
+  Meta meta = 1;
+  int64 request_id = 2;
+  int64 pickup_node = 3;
+  int64 destination_node = 4;
+}
+
+message TripMatched {
+  Meta meta = 1;
+  int64 ride_id = 2;
+  int64 request_id = 3;
+  int64 driver_id = 4;
+  int64 pickup_node = 5;
+  double surge_at_match = 6;
+  double eta_cost_seconds = 7;                  // cost the policy minimized, in seconds
+}
+
+message TripPickedUp {
+  Meta meta = 1;
+  int64 ride_id = 2;
+  int64 driver_id = 3;
+}
+
+message TripCompleted {
+  Meta meta = 1;
+  int64 ride_id = 2;
+  int64 request_id = 3;
+  int64 driver_id = 4;
+  google.protobuf.Timestamp request_time = 5;
+  google.protobuf.Timestamp match_time = 6;
+  google.protobuf.Timestamp pickup_time = 7;
+  google.protobuf.Timestamp dropoff_time = 8;
+  int64 pickup_node = 9;
+  int64 dropoff_node = 10;
+  double pickup_lat = 11;
+  double pickup_lon = 12;
+  double dropoff_lat = 13;
+  double dropoff_lon = 14;
+  double surge_at_match = 15;
+  double eta_predicted_s = 16; // model's trip-duration prediction at match time; 0 if no model loaded
+}
+
+message DriverLocationUpdate {
+  Meta meta = 1;
+  int64 driver_id = 2;
+  double lat = 3;
+  double lon = 4;
+  string state = 5;                             // idle, enroute, or assigned when heading to a pickup
+}
+
+message SurgeUpdated {
+  Meta meta = 1;
+  string h3_cell = 2;                           // H3 cell hex string at the surge resolution
+  double multiplier = 3;
+}

@@ -1,0 +1,68 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "title": "MetroSim marketplace health",
+  "schemaVersion": 39,
+  "tags": ["metrosim", "marketplace"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {"from": "now-15m", "to": "now"},
+  "templating": {
+    "list": [
+      {"name": "scenario", "type": "query", "datasource": {"type": "prometheus"}, "query": "label_values(metrosim_pickup_wait_seconds_count, scenario)", "refresh": 2, "multi": true, "includeAll": true, "current": {"selected": false, "text": "All", "value": "$__all"}},
+      {"name": "policy",   "type": "query", "datasource": {"type": "prometheus"}, "query": "label_values(metrosim_pickup_wait_seconds_count, policy)",   "refresh": 2, "multi": true, "includeAll": true, "current": {"selected": false, "text": "All", "value": "$__all"}}
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Pickup wait (p50 / p95)",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(metrosim_pickup_wait_seconds_bucket{scenario=~\"$scenario\", policy=~\"$policy\"}[1m])) by (le, policy))", "legendFormat": "p50 {{policy}}", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(metrosim_pickup_wait_seconds_bucket{scenario=~\"$scenario\", policy=~\"$policy\"}[1m])) by (le, policy))", "legendFormat": "p95 {{policy}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Trip duration (p50 / p95)",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(metrosim_trip_duration_seconds_bucket{scenario=~\"$scenario\", policy=~\"$policy\"}[1m])) by (le, policy))", "legendFormat": "p50 {{policy}}", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(metrosim_trip_duration_seconds_bucket{scenario=~\"$scenario\", policy=~\"$policy\"}[1m])) by (le, policy))", "legendFormat": "p95 {{policy}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Marketplace state",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 7},
+      "targets": [
+        {"expr": "metrosim_idle_drivers",     "legendFormat": "idle drivers", "refId": "A"},
+        {"expr": "metrosim_active_trips",     "legendFormat": "active trips", "refId": "B"},
+        {"expr": "metrosim_pending_requests", "legendFormat": "pending",      "refId": "C"}
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Trip match rate (/min)",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 7},
+      "targets": [
+        {"expr": "60 * sum(rate(metrosim_trips_matched_total{scenario=~\"$scenario\", policy=~\"$policy\"}[1m])) by (policy)", "legendFormat": "{{policy}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "opm"}}
+    },
+    {
+      "id": 5, "type": "stat", "title": "Surge fraction (cells above 1.05x)",
+      "gridPos": {"x": 0, "y": 15, "w": 6, "h": 5},
+      "targets": [{"expr": "metrosim_surge_fraction", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}
+    },
+    {
+      "id": 6, "type": "stat", "title": "Pickup p95 (last 5m)",
+      "gridPos": {"x": 6, "y": 15, "w": 6, "h": 5},
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(metrosim_pickup_wait_seconds_bucket{scenario=~\"$scenario\", policy=~\"$policy\"}[5m])) by (le))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+name: balanced_demo
+description: Uniform demand sized to the fleet, for watching the live map
+duration: 1800s
+seed: 1
+start_time: 2026-03-02T08:00:00-08:00
+
+vehicles:
+  count: 350
+  spawn: random
+
+arrivals:
+  rate_segments:
+    - { t: 0s,    rate: 0.2 }
+    - { t: 1800s, rate: 0.2 }

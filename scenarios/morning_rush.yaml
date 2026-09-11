@@ -1,0 +1,25 @@
+name: morning_rush
+description: Weekday commute from the Mission, Sunset, Richmond and Noe Valley into downtown; demand peaks at 07:30 and outruns the fleet for a while
+duration: 3600s
+seed: 42
+start_time: 2026-03-02T07:00:00-08:00
+
+vehicles:
+  count: 150
+  spawn: pickups
+
+arrivals:
+  rate_segments:
+    - { t: 0s,    rate: 0.05 }
+    - { t: 600s,  rate: 0.12 }
+    - { t: 1800s, rate: 0.2 }
+    - { t: 3000s, rate: 0.1 }
+    - { t: 3600s, rate: 0.05 }
+  pickup_hotspots:
+    - { name: mission,        lat: 37.7599, lon: -122.4148, radius_m: 1200, weight: 2 }
+    - { name: inner_sunset,   lat: 37.7602, lon: -122.4680, radius_m: 1500, weight: 2 }
+    - { name: inner_richmond, lat: 37.7800, lon: -122.4640, radius_m: 1500, weight: 2 }
+    - { name: noe_valley,     lat: 37.7502, lon: -122.4337, radius_m: 1000, weight: 1 }
+  dropoff_hotspots:
+    - { name: financial_district, lat: 37.7946, lon: -122.3999, radius_m: 800,  weight: 5 }
+    - { name: soma,               lat: 37.7785, lon: -122.4056, radius_m: 1000, weight: 4 }

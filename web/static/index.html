@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetroSim</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+
+        #sidebar {
+            width: 350px;
+            background: #2a2a2a;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.5);
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #00ff88;
+        }
+
+        h2 {
+            font-size: 18px;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            color: #00ddff;
+            border-bottom: 2px solid #444;
+            padding-bottom: 5px;
+        }
+
+        .status {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+        }
+
+        .status-label {
+            color: #aaa;
+        }
+
+        .status-value {
+            font-weight: bold;
+            color: #00ff88;
+        }
+
+        .control-panel {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background: #00ff88;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 5px;
+            transition: background-color 0.15s;
+        }
+
+        button:hover {
+            background: #00ddff;
+        }
+
+
+        button.danger {
+            background: #ff4444;
+            color: #fff;
+        }
+
+        button.danger:hover {
+            background: #ff6666;
+        }
+
+        .speed-control {
+            margin-top: 15px;
+        }
+
+        .speed-control label {
+            display: block;
+            margin-bottom: 8px;
+            color: #aaa;
+        }
+
+        .speed-control input[type="range"] {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .speed-value {
+            text-align: center;
+            font-size: 18px;
+            color: #00ff88;
+            font-weight: bold;
+        }
+
+        .metrics {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px 0;
+            border-bottom: 1px solid #444;
+        }
+
+        .metric-label {
+            color: #aaa;
+        }
+
+        .metric-value {
+            font-weight: bold;
+        }
+
+        .metric-value.good {
+            color: #00ff88;
+        }
+
+        .metric-value.warning {
+            color: #ffaa00;
+        }
+
+        .metric-value.danger {
+            color: #ff4444;
+        }
+
+        .legend {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        .legend-color.idle {
+            background: #00ff88;
+        }
+
+        .legend-color.enroute {
+            background: #00ddff;
+        }
+
+        .legend-color.assigned {
+            background: #ffaa00;
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ff4444;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 10000;
+            display: none;
+        }
+
+        .connection-status.connected {
+            background: #00ff88;
+            color: #000;
+        }
+        body.liveview .memory-only,
+        body:not(.liveview) .liveview-only {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="connection-status" class="connection-status">Connecting...</div>
+
+    <div id="container">
+        <div id="map"></div>
+
+        <div id="sidebar">
+            <h1>MetroSim</h1>
+
+            <div class="status">
+                <div class="status-item memory-only">
+                    <span class="status-label">Tick:</span>
+                    <span class="status-value" id="tick">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Vehicles:</span>
+                    <span class="status-value" id="vehicle-count">0</span>
+                </div>
+                <div class="status-item liveview-only">
+                    <span class="status-label">Requested:</span>
+                    <span class="status-value" id="requested">0</span>
+                </div>
+                <div class="status-item memory-only">
+                    <span class="status-label">Active Rides:</span>
+                    <span class="status-value" id="active-rides">0</span>
+                </div>
+                <div class="status-item memory-only">
+                    <span class="status-label">Pending Requests:</span>
+                    <span class="status-value" id="pending-requests">0</span>
+                </div>
+                <div class="status-item memory-only">
+                    <span class="status-label">Abandoned:</span>
+                    <span class="status-value" id="abandoned">0</span>
+                </div>
+            </div>
+
+            <h2 class="memory-only">Controls</h2>
+            <div class="control-panel memory-only">
+                <button id="btn-pause">Pause</button>
+                <button id="btn-stop" class="danger">Stop</button>
+
+                <div class="speed-control">
+                    <label for="speed-slider">Simulation Speed:</label>
+                    <input type="range" id="speed-slider" min="0.5" max="10" step="0.5" value="1.0">
+                    <div class="speed-value" id="speed-value">1.0x</div>
+                </div>
+            </div>
+
+            <h2>Layers</h2>
+            <div class="control-panel">
+                <button id="btn-congestion-toggle" class="memory-only">Hide congestion edges</button>
+                <button id="btn-hex-toggle" class="memory-only">Show driver hex (r9)</button>
+                <button id="btn-surge-toggle">Show surge hex (r8)</button>
+                <div class="memory-only" style="color:#aaa; font-size:12px; margin-top:8px;">Edges are colored by congestion factor. Driver cells are H3 r9, surge cells r8.</div>
+            </div>
+
+            <h2>Metrics</h2>
+            <div class="metrics">
+                <div class="metric-row">
+                    <span class="metric-label">Completed Rides:</span>
+                    <span class="metric-value good" id="total-rides">0</span>
+                </div>
+                <div class="metric-row memory-only">
+                    <span class="metric-label">Avg Wait Time:</span>
+                    <span class="metric-value" id="avg-wait">0.0s</span>
+                </div>
+                <div class="metric-row memory-only">
+                    <span class="metric-label">P95 Wait Time:</span>
+                    <span class="metric-value" id="p95-wait">0.0s</span>
+                </div>
+                <div class="metric-row memory-only">
+                    <span class="metric-label">Throughput:</span>
+                    <span class="metric-value" id="throughput">0.0 rides/hr</span>
+                </div>
+                <div class="metric-row memory-only">
+                    <span class="metric-label">Avg Congestion:</span>
+                    <span class="metric-value" id="avg-congestion">1.00x</span>
+                </div>
+                <div class="metric-row memory-only">
+                    <span class="metric-label">Max Congestion:</span>
+                    <span class="metric-value" id="max-congestion">1.00x</span>
+                </div>
+                <div class="metric-row memory-only">
+                    <span class="metric-label">Congested Edges:</span>
+                    <span class="metric-value" id="congested-edges">0</span>
+                </div>
+            </div>
+
+            <h2>Legend</h2>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color idle"></div>
+                    <span>Idle</span>
+                    <span id="legend-idle" style="margin-left:auto;font-weight:bold">0</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color enroute"></div>
+                    <span>On trip</span>
+                    <span id="legend-enroute" style="margin-left:auto;font-weight:bold">0</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color assigned"></div>
+                    <span>To pickup</span>
+                    <span id="legend-assigned" style="margin-left:auto;font-weight:bold">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script src="app.js"></script>
+</body>
+</html>

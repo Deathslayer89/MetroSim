@@ -1,0 +1,14 @@
+name: smoke
+description: Tiny run on the CSV test grid to check the pipeline end to end
+duration: 120s
+seed: 11
+start_time: 2026-03-02T08:00:00-08:00
+
+vehicles:
+  count: 10
+  spawn: random
+
+arrivals:
+  rate_segments:
+    - { t: 0s,   rate: 0.5 }
+    - { t: 120s, rate: 0.5 }

@@ -97,6 +97,12 @@ type Dispatcher struct {
 	maxWait   time.Duration // a request unmatched this long is abandoned; 0 disables
 	abandoned int
 
+	reposition     Repositioning
+	idleSince      map[int]time.Time
+	recentPickups  []pickupSeen
+	lastReposition time.Time
+	repositioned   int
+
 	mu sync.Mutex
 }
 
@@ -229,6 +235,7 @@ func (d *Dispatcher) OpenDemandCells(res int) map[h3.Cell]int {
 func (d *Dispatcher) SubmitRequest(req *Request) {
 	d.mu.Lock()
 	d.pendingQueue = append(d.pendingQueue, req)
+	d.notePickup(req)
 	d.mu.Unlock()
 	meta := d.stamper.MetaFor(req.RequestTime)
 	meta.PartitionKey = d.pickupKey(req.ID, req.PickupNode)
@@ -247,6 +254,7 @@ func (d *Dispatcher) Tick(vehicles map[int]*agent.Vehicle, currentTime time.Time
 	d.expireStale(currentTime)
 	pickupEvents, completedEvents := d.updateActiveRides(vehicles, currentTime, edgeWeights)
 	matchedEvents := d.runMatching(vehicles, currentTime, edgeWeights)
+	d.repositionIdle(vehicles, currentTime, edgeWeights)
 	d.mu.Unlock()
 
 	for _, e := range pickupEvents {
@@ -281,7 +289,7 @@ func (d *Dispatcher) expireStale(now time.Time) {
 func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime time.Time, edgeWeights map[int]float64) []*eventspb.TripMatched {
 	d.driverIndex.Clear()
 	for _, vehicle := range vehicles {
-		if vehicle.IsIdle() {
+		if vehicle.IsAvailable() {
 			lat, lon, err := vehicle.GetPosition()
 			if err == nil {
 				d.driverIndex.Insert(vehicle.ID, lat, lon)
@@ -308,10 +316,10 @@ func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime ti
 	out := make([]*eventspb.TripMatched, 0, len(assignments))
 	for _, a := range assignments {
 		driver, ok := vehicles[a.DriverID]
-		if !ok || !driver.IsIdle() {
+		if !ok || !driver.IsAvailable() {
 			continue
 		}
-		// A declined request stays queued and the driver stays idle.
+		// A declined request stays queued and the driver stays available.
 		if !d.accepts() {
 			continue
 		}

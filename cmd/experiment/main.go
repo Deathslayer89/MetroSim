@@ -50,10 +50,11 @@ type provenance struct {
 func main() {
 	scenarioPath := flag.String("scenario", "scenarios/baseline.yaml", "scenario YAML")
 	osmPath := flag.String("osm", "", "OSM .pbf path; the CSV test grid if empty")
-	policiesArg := flag.String("policies", "greedy,batch", "comma-separated policies; the first is the baseline")
+	policiesArg := flag.String("policies", "greedy,batch", "comma-separated policies (greedy, batch, region-sharded, each optionally +reposition); the first is the baseline")
 	replicates := flag.Int("replicates", 30, "seeds per policy")
 	parallel := flag.Int("parallel", runtime.NumCPU(), "runs to execute at once")
 	batchWindow := flag.Duration("batch-window", 3*time.Second, "batch window")
+	repositionAfter := flag.Duration("reposition-after", 2*time.Minute, "idle time before a car repositions, for +reposition policies")
 	outDir := flag.String("out", "experiments", "output directory root")
 	traceDir := flag.String("trace-dir", "", "if set, write per-run Parquet traces under this directory")
 	driverAcceptRate := flag.Float64("driver-accept-rate", 0, "P(driver accepts), 0 disables (always accept)")
@@ -118,7 +119,7 @@ func main() {
 			defer wg.Done()
 			for j := range jobs {
 				seed := sc.Seed + int64(j.rep)
-				res, err := runHeadless(g, sc, j.s.name, *batchWindow, seed, *traceDir, behavior, etaModel)
+				res, err := runHeadless(g, sc, j.s.name, *batchWindow, *repositionAfter, seed, *traceDir, behavior, etaModel)
 				if err != nil {
 					errs <- fmt.Errorf("policy=%s seed=%d: %w", j.s.name, seed, err)
 					continue
@@ -191,7 +192,7 @@ func gitCommit() string {
 // runHeadless runs one policy on one seed. After the scenario ends it keeps
 // ticking for up to half its duration so trips in progress can finish; trips
 // still open after that are left out of the waits.
-func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWindow time.Duration, seed int64, traceDir string, behavior dispatcher.DriverBehavior, etaModel *eta.Model) (runResult, error) {
+func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWindow, repositionAfter time.Duration, seed int64, traceDir string, behavior dispatcher.DriverBehavior, etaModel *eta.Model) (runResult, error) {
 	const tickRate = 10.0
 	const tickDt = time.Second / tickRate
 
@@ -201,7 +202,8 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 		TickRate:         tickRate,
 		SpeedMultiplier:  1.0,
 	})
-	switch polName {
+	base, reposition := strings.CutSuffix(polName, "+reposition")
+	switch base {
 	case "greedy":
 	case "batch":
 		engine.GetDispatcher().SetPolicy(dispatcher.NewBatchPolicy(batchWindow))
@@ -209,6 +211,9 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 		engine.GetDispatcher().SetPolicy(dispatcher.NewRegionShardedBatchPolicy(batchWindow))
 	default:
 		return runResult{}, fmt.Errorf("unknown policy %q", polName)
+	}
+	if reposition {
+		engine.GetDispatcher().SetRepositioning(dispatcher.DefaultRepositioning(repositionAfter))
 	}
 	engine.SetRunInfo(events.RunInfo{Scenario: sc.Name, Policy: polName, Seed: seed})
 	if behavior.AcceptRate > 0 || behavior.CancelRate > 0 {
@@ -254,6 +259,9 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 	}
 
 	completed := d.GetCompletedRides()
+	if reposition {
+		log.Printf("  [%s seed=%d] %d repositioning moves", polName, seed, d.RepositionCount())
+	}
 	if behavior.AcceptRate > 0 || behavior.CancelRate > 0 {
 		bs := d.BehaviorStats()
 		log.Printf("  [%s seed=%d] driver friction: %d declines, %d cancellations", polName, seed, bs.Declines, bs.Cancellations)

@@ -28,7 +28,7 @@ Routing is A* on travel time with a weighted heuristic: straight-line distance o
 
 Each edge's travel time follows a BPR curve on the number of cars on it. Cars move against those times and replan, at most once a simulated second, when an edge still ahead of them changes by more than 10%.
 
-Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one the nearest driver that can reach it. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, which I wrote and test against brute force. A region-sharded variant solves each H3 resolution-5 region on its own.
+Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one the nearest driver that can reach it. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, which I wrote and test against brute force. A region-sharded variant solves each H3 resolution-5 region on its own. With `--reposition-after`, a car idle that long drives toward the nearby area where recent pickups most outnumber free cars, and can still be matched on the way. The experiment runner treats this as a policy variant, as in `--policies batch,batch+reposition`.
 
 Demand comes from scenario files: a piecewise-linear arrival rate, Poisson arrivals, and hotspots that each take a stated share of pickups or dropoffs. The seed fixes everything, so two runs with the same seed produce identical trips, and a test checks exactly that.
 
@@ -54,7 +54,7 @@ go run ./cmd/metrosim --osm data/osm/city.osm.pbf --scenario scenarios/morning_r
 # then open http://localhost:8080
 ```
 
-The page shows cars by state (idle, heading to a pickup, carrying a rider), congested edges, idle-driver and surge cells, and pause, stop and speed controls. `--max-wait 5m` makes riders give up, `--driver-accept-rate` and `--driver-cancel-rate` add driver friction, and `--speed` runs the clock faster.
+The page shows cars by state (idle, repositioning, heading to a pickup, carrying a rider), congested edges, idle-driver and surge cells, and pause, stop and speed controls. `--max-wait 5m` makes riders give up, `--reposition-after 2m` sends idle cars toward demand, `--driver-accept-rate` and `--driver-cancel-rate` add driver friction, and `--speed` runs the clock faster.
 
 The scenarios:
 
@@ -105,7 +105,7 @@ experiments/headline/   the run behind the numbers above
 
 ## Limitations
 
-- The comparison covers matching and nothing else. Idle cars stay where they dropped someone off. There's no repositioning, riders don't react to prices, and drivers have no preferences.
+- The headline compares matching alone. Repositioning is off, so idle cars stay where they dropped someone off. Riders don't react to prices, and drivers have no preferences.
 - Congestion uses a steeper curve than textbook BPR: alpha 1 and beta 2 instead of 0.15 and 4, capped at 5x. With a few hundred cars the textbook curve barely moves, so this one exaggerates congestion to make it matter.
 - Waits are measured on completed trips. Both policies complete 99% or more of requests in the headline, so little is left out.
 - Routes are within 3x optimal by construction. In the 100-pair test the worst one took 54% longer than the best path.

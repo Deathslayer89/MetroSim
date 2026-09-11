@@ -248,11 +248,11 @@ func (e *Engine) Tick() {
 
 	e.dispatcher.Tick(e.vehicles, e.currentTime, allWeights)
 
-	var idleCount int
+	var available int
 	driverPoints := make([]surge.LatLon, 0, len(e.vehicles))
 	for _, v := range e.vehicles {
-		if v.IsIdle() {
-			idleCount++
+		if v.IsAvailable() {
+			available++
 			lat, lon, err := v.GetPosition()
 			if err == nil {
 				driverPoints = append(driverPoints, surge.LatLon{Lat: lat, Lon: lon})
@@ -268,7 +268,7 @@ func (e *Engine) Tick() {
 		)
 	}
 
-	promexport.SetIdleDrivers(idleCount)
+	promexport.SetIdleDrivers(available)
 	promexport.SetActiveTrips(e.dispatcher.GetActiveRideCount())
 	promexport.SetPendingRequests(e.dispatcher.GetPendingCount())
 	promexport.SetAbandonedRequests(e.dispatcher.AbandonedCount())

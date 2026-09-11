@@ -17,7 +17,7 @@ message Meta {
   uint64 event_id = 1;                          // monotonic per-publisher; stable across retries
   google.protobuf.Timestamp time = 2;           // sim time at publish
   string scenario = 3;                          // scenario name (e.g. "morning_rush")
-  string policy = 4;                            // greedy, batch or region-sharded
+  string policy = 4;                            // greedy, batch or region-sharded, plus "+reposition" if on
   int64 seed = 5;                               // scenario seed, for joining replicates
   string partition_key = 6;                     // Kafka partition key; MemoryBus ignores
 }
@@ -69,7 +69,7 @@ message DriverLocationUpdate {
   int64 driver_id = 2;
   double lat = 3;
   double lon = 4;
-  string state = 5;                             // idle, enroute, or assigned when heading to a pickup
+  string state = 5;                             // idle, repositioning, enroute, or assigned when heading to a pickup
 }
 
 message SurgeUpdated {

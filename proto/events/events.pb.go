@@ -34,7 +34,7 @@ type Meta struct {
 	EventId       uint64                 `protobuf:"varint,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`               // monotonic per-publisher; stable across retries
 	Time          *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=time,proto3" json:"time,omitempty"`                                     // sim time at publish
 	Scenario      string                 `protobuf:"bytes,3,opt,name=scenario,proto3" json:"scenario,omitempty"`                             // scenario name (e.g. "morning_rush")
-	Policy        string                 `protobuf:"bytes,4,opt,name=policy,proto3" json:"policy,omitempty"`                                 // greedy, batch or region-sharded
+	Policy        string                 `protobuf:"bytes,4,opt,name=policy,proto3" json:"policy,omitempty"`                                 // greedy, batch or region-sharded, plus "+reposition" if on
 	Seed          int64                  `protobuf:"varint,5,opt,name=seed,proto3" json:"seed,omitempty"`                                    // scenario seed, for joining replicates
 	PartitionKey  string                 `protobuf:"bytes,6,opt,name=partition_key,json=partitionKey,proto3" json:"partition_key,omitempty"` // Kafka partition key; MemoryBus ignores
 	unknownFields protoimpl.UnknownFields
@@ -503,7 +503,7 @@ type DriverLocationUpdate struct {
 	DriverId      int64                  `protobuf:"varint,2,opt,name=driver_id,json=driverId,proto3" json:"driver_id,omitempty"`
 	Lat           float64                `protobuf:"fixed64,3,opt,name=lat,proto3" json:"lat,omitempty"`
 	Lon           float64                `protobuf:"fixed64,4,opt,name=lon,proto3" json:"lon,omitempty"`
-	State         string                 `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"` // idle, enroute, or assigned when heading to a pickup
+	State         string                 `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"` // idle, repositioning, enroute, or assigned when heading to a pickup
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

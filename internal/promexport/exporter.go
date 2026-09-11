@@ -35,7 +35,7 @@ var (
 	// RegisterFleetGauges, so the aggregator doesn't serve them stuck at zero.
 	idleDrivers = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "metrosim_idle_drivers",
-		Help: "Current count of idle drivers.",
+		Help: "Drivers free to take a ride: idle or repositioning.",
 	})
 
 	activeTrips = prometheus.NewGauge(prometheus.GaugeOpts{

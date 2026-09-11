@@ -95,7 +95,7 @@ func (GreedyPolicy) Match(ctx MatchCtx) []Assignment {
 		}
 		for _, c := range ctx.DriverIndex.NearestK(pickup.Lat, pickup.Lon, greedyCandidates) {
 			driver, ok := ctx.Vehicles[c.ID]
-			if !ok || !driver.IsIdle() {
+			if !ok || !driver.IsAvailable() {
 				continue
 			}
 			cost := computeETA(ctx, driver, req)
@@ -159,7 +159,7 @@ func matchBatch(ctx MatchCtx, pending []*Request, candidatesPerRequest int, surg
 		nearest := ctx.DriverIndex.NearestK(pickup.Lat, pickup.Lon, k)
 		ids := make([]int, 0, len(nearest))
 		for _, n := range nearest {
-			if v, ok := ctx.Vehicles[n.ID]; ok && v.IsIdle() {
+			if v, ok := ctx.Vehicles[n.ID]; ok && v.IsAvailable() {
 				ids = append(ids, n.ID)
 				driverSet[n.ID] = struct{}{}
 			}

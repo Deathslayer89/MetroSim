@@ -43,6 +43,7 @@ func main() {
 	driverCancelRate := flag.Float64("driver-cancel-rate", 0, "per-tick P(driver cancels before pickup), 0 disables")
 	speed := flag.Float64("speed", 1.0, "initial sim-speed multiplier (also adjustable live in the UI)")
 	maxWait := flag.Duration("max-wait", 0, "abandon a request unmatched this long (rider gives up); 0 disables")
+	repositionAfter := flag.Duration("reposition-after", 0, "send cars idle this long toward recent demand; 0 disables")
 	flag.Parse()
 
 	g := mustLoadGraph(*osmPath)
@@ -91,6 +92,10 @@ func main() {
 	if *maxWait > 0 {
 		engine.GetDispatcher().SetMaxWait(*maxWait)
 		log.Printf("rider abandonment: requests unmatched for %s leave the queue", *maxWait)
+	}
+	if *repositionAfter > 0 {
+		engine.GetDispatcher().SetRepositioning(dispatcher.DefaultRepositioning(*repositionAfter))
+		log.Printf("repositioning: cars idle for %s head toward recent demand", *repositionAfter)
 	}
 
 	// With --bus=kafka the metrics-aggregator owns trip metrics; subscribing here
@@ -150,7 +155,11 @@ func main() {
 
 	engine.EnableSurge()
 
-	engine.SetRunInfo(events.RunInfo{Scenario: scenarioName, Policy: *policy, Seed: seed})
+	runPolicy := *policy
+	if *repositionAfter > 0 {
+		runPolicy += "+reposition"
+	}
+	engine.SetRunInfo(events.RunInfo{Scenario: scenarioName, Policy: runPolicy, Seed: seed})
 
 	if sc != nil {
 		log.Printf("scenario: %s (%s)", sc.Name, sc.Description)

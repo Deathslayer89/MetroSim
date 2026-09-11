@@ -10,10 +10,12 @@ import (
 type VehicleState int
 
 // Whether an enroute vehicle is heading to a pickup lives in the dispatcher's
-// ride state, not here.
+// ride state, not here. A repositioning vehicle drives with no rider and stays
+// available to the dispatcher.
 const (
 	StateIdle VehicleState = iota
 	StateEnroute
+	StateRepositioning
 )
 
 func (s VehicleState) String() string {
@@ -22,6 +24,8 @@ func (s VehicleState) String() string {
 		return "idle"
 	case StateEnroute:
 		return "enroute"
+	case StateRepositioning:
+		return "repositioning"
 	default:
 		return "unknown"
 	}
@@ -83,21 +87,39 @@ func (v *Vehicle) PlanRouteWithWeights(weights map[int]float64) error {
 		startNode = v.CurrentEdge.ToNode
 	}
 
-	if startNode == v.Destination {
-		v.Route = make([]*graph.Edge, 0)
-		v.RouteIndex = 0
-		v.State = StateIdle
-		return nil
+	var route []*graph.Edge
+	if startNode != v.Destination {
+		r, err := v.pathPlanner.FindPathWithWeights(startNode, v.Destination, weights)
+		if err != nil {
+			return fmt.Errorf("route vehicle %d: %w", v.ID, err)
+		}
+		route = r
 	}
-
-	route, err := v.pathPlanner.FindPathWithWeights(startNode, v.Destination, weights)
-	if err != nil {
-		return fmt.Errorf("route vehicle %d: %w", v.ID, err)
+	// Mid-edge, the vehicle finishes the edge it's on first.
+	if v.CurrentEdge != nil {
+		route = append([]*graph.Edge{v.CurrentEdge}, route...)
 	}
 
 	v.Route = route
 	v.RouteIndex = 0
-	v.State = StateEnroute
+	if len(route) == 0 {
+		v.State = StateIdle
+	} else {
+		v.State = StateEnroute
+	}
+	return nil
+}
+
+// Reposition drives the vehicle to node with no rider. It stays available on
+// the way and turns Idle when it arrives.
+func (v *Vehicle) Reposition(node int, weights map[int]float64) error {
+	v.SetDestination(node)
+	if err := v.PlanRouteWithWeights(weights); err != nil {
+		return err
+	}
+	if v.State == StateEnroute {
+		v.State = StateRepositioning
+	}
 	return nil
 }
 
@@ -109,7 +131,7 @@ func (v *Vehicle) Move(deltaTime float64) {
 // MoveWithWeights spends deltaTime seconds traveling at each edge's travel time
 // from weights, free flow when absent. Leftover time carries into the next edge.
 func (v *Vehicle) MoveWithWeights(deltaTime float64, weights map[int]float64) {
-	if v.State != StateEnroute {
+	if !v.moving() {
 		return
 	}
 
@@ -230,6 +252,15 @@ func (v *Vehicle) IsEnroute() bool {
 	return v.State == StateEnroute
 }
 
+// IsAvailable reports whether the dispatcher may assign the vehicle.
+func (v *Vehicle) IsAvailable() bool {
+	return v.State == StateIdle || v.State == StateRepositioning
+}
+
+func (v *Vehicle) moving() bool {
+	return v.State == StateEnroute || v.State == StateRepositioning
+}
+
 func (v *Vehicle) HasReachedDestination() bool {
 	return v.State == StateIdle && v.CurrentNode == v.Destination
 }
@@ -247,7 +278,7 @@ func (v *Vehicle) MaybeReplan(changed, weights map[int]float64) bool {
 }
 
 func (v *Vehicle) changedAhead(changed map[int]float64) bool {
-	if v.State != StateEnroute {
+	if !v.moving() {
 		return false
 	}
 	for i := v.RouteIndex; i < len(v.Route); i++ {

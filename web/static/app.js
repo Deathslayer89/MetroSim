@@ -11,7 +11,7 @@ let mapRecentered = false;
 let paused = false;
 let stopped = false;
 
-const STATE_LABELS = { idle: 'idle', enroute: 'on trip', assigned: 'to pickup' };
+const STATE_LABELS = { idle: 'idle', repositioning: 'repositioning', enroute: 'on trip', assigned: 'to pickup' };
 
 function initMap() {
     map = L.map('map').setView([37.7749, -122.4194], 13);
@@ -30,6 +30,8 @@ function getVehicleColor(state) {
             return '#00ddff';
         case 'assigned':
             return '#ffaa00';
+        case 'repositioning':
+            return '#b388ff';
         default:
             return '#ffffff';
     }
@@ -274,13 +276,14 @@ function handleUpdate(data) {
     const vehicles = data.vehicles || [];
     document.getElementById('vehicle-count').textContent = vehicles.length;
     const seen = new Set();
-    const counts = { idle: 0, enroute: 0, assigned: 0 };
+    const counts = { idle: 0, repositioning: 0, enroute: 0, assigned: 0 };
     vehicles.forEach(v => {
         seen.add(v.id);
         updateVehicle(v);
         if (counts[v.state] !== undefined) counts[v.state]++;
     });
     document.getElementById('legend-idle').textContent = counts.idle;
+    document.getElementById('legend-repositioning').textContent = counts.repositioning;
     document.getElementById('legend-enroute').textContent = counts.enroute;
     document.getElementById('legend-assigned').textContent = counts.assigned;
     Object.keys(vehicleMarkers).forEach(id => {

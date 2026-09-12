@@ -1,5 +1,7 @@
 // Command experiment runs dispatch policies over the same scenario and seeds,
-// then reports per-seed mean pickup waits side by side.
+// then reports per-seed mean pickup waits side by side. Given several --demand
+// multipliers, it does that at each one and reports how the comparison moves
+// as demand grows.
 package main
 
 import (
@@ -8,11 +10,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,6 +49,14 @@ type policySummary struct {
 	allWaits []float64
 }
 
+// level holds the runs at one demand multiplier: the scenario with its arrival
+// rates scaled, and a summary per policy.
+type level struct {
+	demand float64
+	sc     *scenario.Scenario
+	pols   []*policySummary
+}
+
 type provenance struct {
 	graph, scenario, command, commit string
 }
@@ -53,6 +65,7 @@ func main() {
 	scenarioPath := flag.String("scenario", "scenarios/baseline.yaml", "scenario YAML")
 	osmPath := flag.String("osm", "", "OSM .pbf path; the CSV test grid if empty")
 	policiesArg := flag.String("policies", "greedy,batch", "comma-separated policies (greedy, batch, region-sharded, each optionally +reposition); the first is the baseline")
+	demandArg := flag.String("demand", "1", "comma-separated multipliers on the scenario's arrival rates; each gets every policy and seed")
 	replicates := flag.Int("replicates", 30, "seeds per policy")
 	parallel := flag.Int("parallel", runtime.NumCPU(), "runs to execute at once")
 	batchWindow := flag.Duration("batch-window", 3*time.Second, "batch window")
@@ -64,6 +77,10 @@ func main() {
 	etaModelPath := flag.String("eta-model", "", "trained ETA model (cmd/train-eta); fills eta_predicted_s in traces")
 	flag.Parse()
 
+	demands, err := parseDemands(*demandArg)
+	if err != nil {
+		log.Fatalf("--demand: %v", err)
+	}
 	prov := provenance{
 		scenario: *scenarioPath,
 		command:  strings.TrimSpace("go run ./cmd/experiment " + strings.Join(os.Args[1:], " ")),
@@ -100,20 +117,22 @@ func main() {
 	}
 	log.Printf("output: %s", runDir)
 
-	var pols []*policySummary
-	byName := make(map[string]*policySummary)
-	for _, name := range strings.Split(*policiesArg, ",") {
-		s := &policySummary{name: strings.TrimSpace(name), runs: make([]runResult, *replicates)}
-		pols = append(pols, s)
-		byName[s.name] = s
+	var levels []*level
+	for _, k := range demands {
+		lv := &level{demand: k, sc: scaled(sc, k)}
+		for _, name := range strings.Split(*policiesArg, ",") {
+			lv.pols = append(lv.pols, &policySummary{name: strings.TrimSpace(name), runs: make([]runResult, *replicates)})
+		}
+		levels = append(levels, lv)
 	}
 
 	type job struct {
+		lv  *level
 		s   *policySummary
 		rep int
 	}
 	jobs := make(chan job)
-	errs := make(chan error, len(pols)*(*replicates))
+	errs := make(chan error, len(levels)*len(levels[0].pols)*(*replicates))
 	var wg sync.WaitGroup
 	for w := 0; w < max(1, *parallel); w++ {
 		wg.Add(1)
@@ -121,20 +140,23 @@ func main() {
 			defer wg.Done()
 			for j := range jobs {
 				seed := sc.Seed + int64(j.rep)
-				res, err := runHeadless(g, sc, j.s.name, *batchWindow, *repositionAfter, seed, *traceDir, behavior, etaModel)
+				res, err := runHeadless(g, j.lv.sc, j.s.name, *batchWindow, *repositionAfter, seed, *traceDir, behavior, etaModel)
 				if err != nil {
-					errs <- fmt.Errorf("policy=%s seed=%d: %w", j.s.name, seed, err)
+					errs <- fmt.Errorf("%s policy=%s seed=%d: %w", j.lv.sc.Name, j.s.name, seed, err)
 					continue
 				}
 				j.s.runs[j.rep] = res
-				log.Printf("[%s seed %d] requested=%d picked_up=%d completed=%d mean_wait=%.1fs",
-					j.s.name, seed, res.requested, res.pickedUp, res.completed, stats.Mean(res.waits))
+				log.Printf("[%s %s seed %d] requested=%d picked_up=%d completed=%d mean_wait=%.1fs",
+					j.lv.sc.Name, j.s.name, seed, res.requested, res.pickedUp, res.completed, stats.Mean(res.waits))
 			}
 		}()
 	}
-	for _, s := range pols {
-		for r := 0; r < *replicates; r++ {
-			jobs <- job{s, r}
+	// The busiest level's runs take longest, so they start first.
+	for i := len(levels) - 1; i >= 0; i-- {
+		for _, s := range levels[i].pols {
+			for r := 0; r < *replicates; r++ {
+				jobs <- job{levels[i], s, r}
+			}
 		}
 	}
 	close(jobs)
@@ -143,22 +165,77 @@ func main() {
 	if err := <-errs; err != nil {
 		log.Fatal(err)
 	}
-	for _, s := range pols {
-		for _, r := range s.runs {
-			s.allWaits = append(s.allWaits, r.waits...)
+	for _, lv := range levels {
+		for _, s := range lv.pols {
+			for _, r := range s.runs {
+				s.allWaits = append(s.allWaits, r.waits...)
+			}
 		}
 	}
 
-	if err := writeWaitsCSV(filepath.Join(runDir, "waits.csv"), pols); err != nil {
+	if err := writeWaitsCSV(filepath.Join(runDir, "waits.csv"), levels); err != nil {
 		log.Fatalf("csv: %v", err)
 	}
-	if err := writeCDFSVG(filepath.Join(runDir, "wait_cdf.svg"), byName); err != nil {
-		log.Fatalf("svg: %v", err)
+	for _, lv := range levels {
+		byName := make(map[string]*policySummary, len(lv.pols))
+		for _, s := range lv.pols {
+			byName[s.name] = s
+		}
+		if err := writeCDFSVG(filepath.Join(runDir, cdfFile(lv, len(levels))), byName); err != nil {
+			log.Fatalf("svg: %v", err)
+		}
 	}
-	if err := writeReport(filepath.Join(runDir, "report.md"), sc, prov, pols); err != nil {
+	if len(levels) > 1 {
+		if err := writeDemandSVG(filepath.Join(runDir, "demand.svg"), levels); err != nil {
+			log.Fatalf("svg: %v", err)
+		}
+	}
+	if err := writeReport(filepath.Join(runDir, "report.md"), sc, prov, levels, *batchWindow); err != nil {
 		log.Fatalf("report: %v", err)
 	}
 	log.Printf("wrote %s", filepath.Join(runDir, "report.md"))
+}
+
+// parseDemands reads --demand: positive multipliers, none repeated, returned in
+// increasing order.
+func parseDemands(arg string) ([]float64, error) {
+	var out []float64
+	for _, field := range strings.Split(arg, ",") {
+		k, err := strconv.ParseFloat(strings.TrimSpace(field), 64)
+		if err != nil || !(k > 0) || math.IsInf(k, 1) {
+			return nil, fmt.Errorf("%q is not a positive number", field)
+		}
+		for _, prev := range out {
+			if prev == k {
+				return nil, fmt.Errorf("%g is listed twice", k)
+			}
+		}
+		out = append(out, k)
+	}
+	sort.Float64s(out)
+	return out, nil
+}
+
+// scaled returns a copy of sc with every arrival rate multiplied by k, named
+// after k unless it's 1 so its traces and events don't pass for the original's.
+func scaled(sc *scenario.Scenario, k float64) *scenario.Scenario {
+	c := *sc
+	if k != 1 {
+		c.Name = fmt.Sprintf("%s_%gx", sc.Name, k)
+	}
+	c.Arrivals.RateSegments = make([]scenario.RatePoint, len(sc.Arrivals.RateSegments))
+	for i, p := range sc.Arrivals.RateSegments {
+		c.Arrivals.RateSegments[i] = scenario.RatePoint{T: p.T, Rate: k * p.Rate}
+	}
+	return &c
+}
+
+// cdfFile names a level's wait CDF; with one level there's nothing to tell apart.
+func cdfFile(lv *level, levels int) string {
+	if levels == 1 {
+		return "wait_cdf.svg"
+	}
+	return fmt.Sprintf("wait_cdf_%gx.svg", lv.demand)
 }
 
 func loadGraph(osmPath string) (*graph.Graph, string, error) {
@@ -287,22 +364,25 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 	return runResult{seed: seed, waits: waits, pickedUp: pickedUp, requested: gen.RequestCount(), completed: len(completed), moves: d.RepositionCount()}, nil
 }
 
-func writeWaitsCSV(path string, pols []*policySummary) error {
+func writeWaitsCSV(path string, levels []*level) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"policy", "seed", "wait_seconds", "picked_up"}); err != nil {
+	if err := w.Write([]string{"demand", "policy", "seed", "wait_seconds", "picked_up"}); err != nil {
 		return err
 	}
-	for _, s := range pols {
-		for _, r := range s.runs {
-			for k, x := range r.waits {
-				row := []string{s.name, strconv.FormatInt(r.seed, 10), strconv.FormatFloat(x, 'f', 4, 64), strconv.FormatBool(k < r.pickedUp)}
-				if err := w.Write(row); err != nil {
-					return err
+	for _, lv := range levels {
+		demand := strconv.FormatFloat(lv.demand, 'g', -1, 64)
+		for _, s := range lv.pols {
+			for _, r := range s.runs {
+				for k, x := range r.waits {
+					row := []string{demand, s.name, strconv.FormatInt(r.seed, 10), strconv.FormatFloat(x, 'f', 4, 64), strconv.FormatBool(k < r.pickedUp)}
+					if err := w.Write(row); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -311,31 +391,97 @@ func writeWaitsCSV(path string, pols []*policySummary) error {
 	return w.Error()
 }
 
-func writeReport(path string, sc *scenario.Scenario, prov provenance, pols []*policySummary) error {
+func writeReport(path string, sc *scenario.Scenario, prov provenance, levels []*level, window time.Duration) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
+	pols := levels[0].pols
 	names := make([]string, len(pols))
 	for i, s := range pols {
 		names[i] = s.name
 	}
 	seeds := len(pols[0].runs)
+	multipliers := make([]string, len(levels))
+	for i, lv := range levels {
+		multipliers[i] = fmt.Sprintf("%gx", lv.demand)
+	}
 
-	fmt.Fprintf(f, "# %s: %s\n\n", sc.Name, strings.Join(names, " vs "))
+	title, demand := strings.Join(names, " vs "), ""
+	switch {
+	case len(levels) > 1:
+		title += " as demand grows"
+		demand = ", arrival rates times " + strings.Join(multipliers, ", ")
+	case levels[0].demand != 1:
+		demand = ", arrival rates times " + multipliers[0]
+	}
+	fmt.Fprintf(f, "# %s: %s\n\n", sc.Name, title)
 	fmt.Fprintf(f, "| | |\n|---|---|\n")
 	fmt.Fprintf(f, "| graph | %s |\n", prov.graph)
-	fmt.Fprintf(f, "| scenario | `%s`, %g min, %d vehicles |\n", prov.scenario, sc.Duration.Minutes(), sc.Vehicles.Count)
-	fmt.Fprintf(f, "| seeds | %d to %d, each run once per policy |\n", sc.Seed, sc.Seed+int64(seeds)-1)
+	fmt.Fprintf(f, "| scenario | `%s`, %g min, %d vehicles%s |\n", prov.scenario, sc.Duration.Minutes(), sc.Vehicles.Count, demand)
+	fmt.Fprintf(f, "| seeds | %d to %d, each run once per policy%s |\n", sc.Seed, sc.Seed+int64(seeds)-1, map[bool]string{true: " and demand"}[len(levels) > 1])
 	fmt.Fprintf(f, "| command | `%s` |\n", prov.command)
-	fmt.Fprintf(f, "| commit | `%s` |\n\n", prov.commit)
+	fmt.Fprintf(f, "| commit | `%s` |\n", prov.commit)
 
-	fmt.Fprintf(f, "## All trips\n\n")
+	if len(levels) == 1 {
+		writeLevel(f, levels[0], "##", cdfFile(levels[0], 1))
+		return nil
+	}
+	writeSummary(f, levels, window)
+	for _, lv := range levels {
+		fmt.Fprintf(f, "\n## %gx demand\n", lv.demand)
+		writeLevel(f, lv, "###", cdfFile(lv, len(levels)))
+	}
+	return nil
+}
+
+// writeSummary gives each demand level a row: requests per run, how many arrive
+// in one batch window, each policy's mean wait, and each other policy's paired
+// difference from the first.
+func writeSummary(f *os.File, levels []*level, window time.Duration) {
+	pols := levels[0].pols
+	fmt.Fprintf(f, "\n## Mean wait by demand\n\n![mean wait by demand](demand.svg)\n\n")
+	head := fmt.Sprintf("| demand | requests per run | arrivals per %g s window |", window.Seconds())
+	rule := "|---:|---:|---:|"
+	for _, s := range pols {
+		head += fmt.Sprintf(" %s mean wait (s) |", s.name)
+		rule += "---:|"
+	}
+	for _, alt := range pols[1:] {
+		head += fmt.Sprintf(" %s minus %s (s) | 95%% CI | %s lower in |", alt.name, pols[0].name, alt.name)
+		rule += "---:|---:|---:|"
+	}
+	fmt.Fprintln(f, head)
+	fmt.Fprintln(f, rule)
+	for _, lv := range levels {
+		var req int
+		for _, r := range lv.pols[0].runs {
+			req += r.requested
+		}
+		perRun := float64(req) / float64(len(lv.pols[0].runs))
+		row := fmt.Sprintf("| %gx | %.0f | %.2f |", lv.demand, perRun, perRun/lv.sc.Duration.Seconds()*window.Seconds())
+		for _, s := range lv.pols {
+			row += fmt.Sprintf(" %.1f |", stats.Mean(s.allWaits))
+		}
+		for _, alt := range lv.pols[1:] {
+			diffs, wins, ties := seedDiffs(lv.pols[0], alt)
+			lo, hi := bootstrapCI(diffs)
+			row += fmt.Sprintf(" %+.1f | [%+.1f, %+.1f] | %d of %d |", stats.Mean(diffs), lo, hi, wins, len(diffs)-ties)
+		}
+		fmt.Fprintln(f, row)
+	}
+	fmt.Fprintln(f, "\nDifferences are per seed, paired, with a 95% bootstrap interval across seeds. The sections below have each level in full.")
+}
+
+// writeLevel reports one demand level: every trip per policy, then each other
+// policy against the first, seed by seed. Its headings start at h.
+func writeLevel(f *os.File, lv *level, h, cdf string) {
+	fmt.Fprintf(f, "\n%s All trips\n\n", h)
 	fmt.Fprintln(f, "| policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |")
 	fmt.Fprintln(f, "|---|---:|---:|---:|---:|---:|---:|")
-	for _, s := range pols {
+	for _, s := range lv.pols {
 		var req, up, done int
 		for _, r := range s.runs {
 			req += r.requested
@@ -346,7 +492,7 @@ func writeReport(path string, sc *scenario.Scenario, prov provenance, pols []*po
 			stats.Mean(s.allWaits), stats.Percentile(s.allWaits, 0.5), stats.Percentile(s.allWaits, 0.95))
 	}
 	fmt.Fprintln(f, "\nWaits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.")
-	for _, s := range pols {
+	for _, s := range lv.pols {
 		var moves int
 		for _, r := range s.runs {
 			moves += r.moves
@@ -356,49 +502,63 @@ func writeReport(path string, sc *scenario.Scenario, prov provenance, pols []*po
 		}
 	}
 
-	for _, alt := range pols[1:] {
-		writePaired(f, pols[0], alt)
+	for _, alt := range lv.pols[1:] {
+		writePaired(f, h, lv.pols[0], alt)
 	}
 
-	fmt.Fprintf(f, "\n## Wait-time CDF, all trips\n\n![wait_cdf](wait_cdf.svg)\n")
-	return nil
+	fmt.Fprintf(f, "\n%s Wait-time CDF, all trips\n\n![wait_cdf](%s)\n", h, cdf)
 }
 
 // writePaired compares alt with base seed by seed. A seed where either policy
 // had no riders has no mean wait, so it is left out.
-func writePaired(f *os.File, base, alt *policySummary) {
-	fmt.Fprintf(f, "\n## %s vs %s: mean wait per seed (s)\n\n| seed | %s | %s | difference |\n|---:|---:|---:|---:|\n",
-		alt.name, base.name, base.name, alt.name)
-	var diffs []float64
-	wins, ties, skipped := 0, 0, 0
+func writePaired(f *os.File, h string, base, alt *policySummary) {
+	fmt.Fprintf(f, "\n%s %s vs %s: mean wait per seed (s)\n\n| seed | %s | %s | difference |\n|---:|---:|---:|---:|\n",
+		h, alt.name, base.name, base.name, alt.name)
 	for i := range base.runs {
 		a, b := base.runs[i].waits, alt.runs[i].waits
 		if len(a) == 0 || len(b) == 0 {
-			skipped++
 			fmt.Fprintf(f, "| %d | | | no riders |\n", base.runs[i].seed)
 			continue
 		}
-		d := stats.Mean(b) - stats.Mean(a)
-		diffs = append(diffs, d)
-		if d < 0 {
-			wins++
-		} else if d == 0 {
-			ties++
-		}
-		fmt.Fprintf(f, "| %d | %.1f | %.1f | %+.1f |\n", base.runs[i].seed, stats.Mean(a), stats.Mean(b), d)
+		fmt.Fprintf(f, "| %d | %.1f | %.1f | %+.1f |\n", base.runs[i].seed, stats.Mean(a), stats.Mean(b), stats.Mean(b)-stats.Mean(a))
 	}
+	diffs, wins, ties := seedDiffs(base, alt)
 	if len(diffs) == 0 {
 		fmt.Fprintln(f, "\nNo seed had riders under both policies.")
 		return
 	}
-	lo, hi := stats.BootstrapMeanCI(diffs, 10000, rand.New(rand.NewSource(1)))
+	lo, hi := bootstrapCI(diffs)
 	fmt.Fprintf(f, "\nMean difference, %s minus %s: %+.1f s, 95%% bootstrap CI [%+.1f, %+.1f] across seeds.\n\n",
 		alt.name, base.name, stats.Mean(diffs), lo, hi)
 	fmt.Fprintf(f, "%s had the lower mean wait in %d of %d seeds; two-sided sign test p = %.3g.\n",
 		alt.name, wins, len(diffs)-ties, stats.SignTest(wins, len(diffs)-ties))
-	if skipped > 0 {
+	if skipped := len(base.runs) - len(diffs); skipped > 0 {
 		fmt.Fprintf(f, "\n%d seeds left out because a policy had no riders.\n", skipped)
 	}
+}
+
+// seedDiffs returns alt's mean wait minus base's for each seed where both had
+// riders, and in how many of those alt was lower or tied.
+func seedDiffs(base, alt *policySummary) (diffs []float64, wins, ties int) {
+	for i := range base.runs {
+		a, b := base.runs[i].waits, alt.runs[i].waits
+		if len(a) == 0 || len(b) == 0 {
+			continue
+		}
+		d := stats.Mean(b) - stats.Mean(a)
+		diffs = append(diffs, d)
+		switch {
+		case d < 0:
+			wins++
+		case d == 0:
+			ties++
+		}
+	}
+	return diffs, wins, ties
+}
+
+func bootstrapCI(diffs []float64) (lo, hi float64) {
+	return stats.BootstrapMeanCI(diffs, 10000, rand.New(rand.NewSource(1)))
 }
 
 func percent(a, b int) float64 {

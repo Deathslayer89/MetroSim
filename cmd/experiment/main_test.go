@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -59,5 +60,33 @@ func TestRunHeadlessCountsRidersNeverPickedUp(t *testing.T) {
 	}
 	if len(res.waits) != res.requested {
 		t.Errorf("%d waits for %d riders", len(res.waits), res.requested)
+	}
+}
+
+// Each demand level scales its own copy of the arrival rates, so the loaded
+// scenario every level starts from stays as it was.
+func TestScaledCopiesTheArrivalRates(t *testing.T) {
+	sc := steady("base", 1, 0.5)
+	two := scaled(sc, 2)
+	if got := two.Arrivals.RateSegments[1].Rate; got != 1 {
+		t.Errorf("at 2x the rate is %v, want 1", got)
+	}
+	if got := sc.Arrivals.RateSegments[1].Rate; got != 0.5 {
+		t.Errorf("scaling changed the loaded scenario's rate to %v", got)
+	}
+	if two.Name == sc.Name {
+		t.Error("the scaled scenario kept its name, so its traces would overwrite the original's")
+	}
+}
+
+func TestParseDemandsSortsAndRejectsBadMultipliers(t *testing.T) {
+	got, err := parseDemands("2, 1,1.5")
+	if err != nil || !slices.Equal(got, []float64{1, 1.5, 2}) {
+		t.Errorf(`parseDemands("2, 1,1.5") = %v, %v`, got, err)
+	}
+	for _, bad := range []string{"0", "-1", "x", "NaN", "Inf", "1,1"} {
+		if _, err := parseDemands(bad); err == nil {
+			t.Errorf("parseDemands(%q) accepted it", bad)
+		}
 	}
 }

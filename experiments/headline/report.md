@@ -6,31 +6,33 @@
 | scenario | `scenarios/downtown.yaml`, 60 min, 180 vehicles |
 | seeds | 1 to 10, each run once per policy |
 | command | `go run ./cmd/experiment --osm data/osm/city.osm.pbf --scenario scenarios/downtown.yaml --replicates 10` |
-| commit | `033aee8` |
+| commit | `feeaba2` |
 
 ## All trips
 
-| policy | requested | completed | mean wait (s) | p50 (s) | p95 (s) |
-|---|---:|---:|---:|---:|---:|
-| greedy | 4259 | 4218 (99.0%) | 139.0 | 97.8 | 377.7 |
-| batch | 4259 | 4221 (99.1%) | 124.5 | 89.1 | 324.5 |
+| policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |
+|---|---:|---:|---:|---:|---:|---:|
+| greedy | 4259 | 4258 (100.0%) | 4214 | 149.5 | 100.8 | 415.5 |
+| batch | 4259 | 4259 (100.0%) | 4219 | 133.5 | 92.4 | 368.8 |
+
+Waits cover every rider who was picked up, including riders still aboard when the run stopped.
 
 ## batch vs greedy: mean wait per seed (s)
 
 | seed | greedy | batch | difference |
 |---:|---:|---:|---:|
-| 1 | 140.1 | 120.3 | -19.8 |
-| 2 | 149.5 | 134.3 | -15.2 |
-| 3 | 149.0 | 132.6 | -16.4 |
-| 4 | 156.0 | 143.1 | -12.9 |
-| 5 | 143.9 | 129.0 | -14.9 |
-| 6 | 127.5 | 114.5 | -13.0 |
-| 7 | 131.4 | 117.8 | -13.6 |
-| 8 | 129.2 | 119.6 | -9.6 |
-| 9 | 136.5 | 119.5 | -16.9 |
-| 10 | 127.4 | 115.3 | -12.0 |
+| 1 | 151.7 | 132.2 | -19.5 |
+| 2 | 155.1 | 137.1 | -18.0 |
+| 3 | 165.6 | 143.4 | -22.2 |
+| 4 | 172.6 | 158.5 | -14.2 |
+| 5 | 158.5 | 139.2 | -19.3 |
+| 6 | 135.8 | 119.7 | -16.1 |
+| 7 | 137.0 | 125.7 | -11.2 |
+| 8 | 140.9 | 132.1 | -8.8 |
+| 9 | 148.3 | 129.6 | -18.7 |
+| 10 | 130.0 | 118.4 | -11.6 |
 
-Mean difference, batch minus greedy: -14.4 s, 95% bootstrap CI [-16.2, -12.8] across seeds.
+Mean difference, batch minus greedy: -16.0 s, 95% bootstrap CI [-18.5, -13.3] across seeds.
 
 batch had the lower mean wait in 10 of 10 seeds; two-sided sign test p = 0.00195.
 

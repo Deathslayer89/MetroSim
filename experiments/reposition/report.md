@@ -6,31 +6,35 @@
 | scenario | `scenarios/downtown.yaml`, 60 min, 180 vehicles |
 | seeds | 1 to 10, each run once per policy |
 | command | `go run ./cmd/experiment --osm data/osm/city.osm.pbf --scenario scenarios/downtown.yaml --replicates 10 --policies batch,batch+reposition` |
-| commit | `21f7a91` |
+| commit | `feeaba2` |
 
 ## All trips
 
-| policy | requested | completed | mean wait (s) | p50 (s) | p95 (s) |
-|---|---:|---:|---:|---:|---:|
-| batch | 4259 | 4221 (99.1%) | 124.5 | 89.1 | 324.5 |
-| batch+reposition | 4259 | 4229 (99.3%) | 86.5 | 50.0 | 312.1 |
+| policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |
+|---|---:|---:|---:|---:|---:|---:|
+| batch | 4259 | 4259 (100.0%) | 4219 | 133.5 | 92.4 | 368.8 |
+| batch+reposition | 4259 | 4259 (100.0%) | 4224 | 94.0 | 51.5 | 342.4 |
+
+Waits cover every rider who was picked up, including riders still aboard when the run stopped.
+
+batch+reposition made 5815 repositioning moves, 582 per run.
 
 ## batch+reposition vs batch: mean wait per seed (s)
 
 | seed | batch | batch+reposition | difference |
 |---:|---:|---:|---:|
-| 1 | 120.3 | 84.6 | -35.8 |
-| 2 | 134.3 | 102.7 | -31.5 |
-| 3 | 132.6 | 96.9 | -35.7 |
-| 4 | 143.1 | 103.7 | -39.4 |
-| 5 | 129.0 | 87.2 | -41.7 |
-| 6 | 114.5 | 74.3 | -40.1 |
-| 7 | 117.8 | 77.4 | -40.5 |
-| 8 | 119.6 | 80.7 | -38.8 |
-| 9 | 119.5 | 83.6 | -35.9 |
-| 10 | 115.3 | 75.2 | -40.1 |
+| 1 | 132.2 | 99.2 | -33.0 |
+| 2 | 137.1 | 104.3 | -32.7 |
+| 3 | 143.4 | 104.0 | -39.4 |
+| 4 | 158.5 | 120.0 | -38.5 |
+| 5 | 139.2 | 99.8 | -39.4 |
+| 6 | 119.7 | 75.1 | -44.6 |
+| 7 | 125.7 | 81.4 | -44.4 |
+| 8 | 132.1 | 89.5 | -42.6 |
+| 9 | 129.6 | 90.4 | -39.2 |
+| 10 | 118.4 | 76.9 | -41.5 |
 
-Mean difference, batch+reposition minus batch: -38.0 s, 95% bootstrap CI [-39.7, -36.0] across seeds.
+Mean difference, batch+reposition minus batch: -39.5 s, 95% bootstrap CI [-41.9, -36.9] across seeds.
 
 batch+reposition had the lower mean wait in 10 of 10 seeds; two-sided sign test p = 0.00195.
 

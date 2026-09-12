@@ -14,7 +14,8 @@ const repositionResolution = 8
 
 // Repositioning sends cars that have sat idle for IdleAfter toward the cell,
 // within Rings rings of their own, where recent pickups most outnumber the
-// available cars. Recent means requested within Window; it runs every Every.
+// available cars, if that cell is at least two cars shorter than their own.
+// Recent means requested within Window; it runs every Every.
 type Repositioning struct {
 	IdleAfter time.Duration
 	Every     time.Duration
@@ -139,7 +140,9 @@ func (d *Dispatcher) repositionIdle(vehicles map[int]*agent.Vehicle, now time.Ti
 				best = c
 			}
 		}
-		if best == here || gap[best] <= 0 {
+		// A move shifts one car's worth of gap each way, so a lead of one would
+		// just swap the two shortfalls and invite the car straight back.
+		if best == here || gap[best] <= 0 || gap[best]-gap[here] < 2 {
 			continue
 		}
 		if err := v.Reposition(target[best], weights); err != nil {

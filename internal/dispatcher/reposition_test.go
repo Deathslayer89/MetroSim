@@ -88,3 +88,22 @@ func TestRepositioningCarCanBeMatched(t *testing.T) {
 		t.Fatalf("want the repositioning car assigned, got %d active rides and state %s", d.GetActiveRideCount(), car.State)
 	}
 }
+
+// One recent pickup in each of two cells and one car: moving would only swap
+// which cell is short, so the car stays where it is.
+func TestRepositionDoesNotBounceBetweenEqualCells(t *testing.T) {
+	d, g, planner := repositionFixture(t)
+	car := agent.NewVehicle(1, 0, g, planner)
+	vehicles := map[int]*agent.Vehicle{1: car}
+	d.notePickup(&Request{PickupNode: 0, RequestTime: t0})
+	d.notePickup(&Request{PickupNode: 1, RequestTime: t0})
+	now := t0
+	for i := 0; i < 14*60; i++ {
+		d.repositionIdle(vehicles, now, nil)
+		car.Move(1)
+		now = now.Add(time.Second)
+	}
+	if n := d.RepositionCount(); n > 0 {
+		t.Errorf("car repositioned %d times between two equally short cells", n)
+	}
+}

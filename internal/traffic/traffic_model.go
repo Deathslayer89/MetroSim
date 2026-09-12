@@ -52,6 +52,7 @@ type TrafficModel struct {
 	graph            *graph.Graph
 	edgeDensities    map[int]int     // vehicles per occupied edge
 	congested        map[int]float64 // travel time of edges slower than free flow
+	reported         map[int]float64 // travel time when last reported changed; free flow if absent
 	edgeCapacities   map[int]float64 // vehicles each edge holds
 	congestionParams CongestionParams
 	mu               sync.RWMutex
@@ -62,6 +63,7 @@ func NewTrafficModel(g *graph.Graph, params CongestionParams) *TrafficModel {
 		graph:            g,
 		edgeDensities:    make(map[int]int),
 		congested:        make(map[int]float64),
+		reported:         make(map[int]float64),
 		edgeCapacities:   make(map[int]float64),
 		congestionParams: params,
 	}
@@ -86,12 +88,13 @@ func (tm *TrafficModel) UpdateDensities(vehicles []*agent.Vehicle) {
 }
 
 // ComputeEdgeWeights recomputes travel times on occupied edges and returns the
-// edges whose time moved by more than 10%, which is what triggers replanning.
+// edges whose time has moved more than 10% since it was last reported, which is
+// what triggers replanning. Measuring from the last report rather than the last
+// tick means a jam that grows a little every tick still gets reported.
 func (tm *TrafficModel) ComputeEdgeWeights() map[int]float64 {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	changed := make(map[int]float64)
 	newCongested := make(map[int]float64, len(tm.edgeDensities))
 	for id, density := range tm.edgeDensities {
 		edge := tm.graph.Edges[id]
@@ -102,35 +105,41 @@ func (tm *TrafficModel) ComputeEdgeWeights() map[int]float64 {
 			newCongested[id] = w
 		}
 	}
-
-	baseOf := func(id int) float64 {
-		if e := tm.graph.Edges[id]; e != nil {
-			return e.BaseWeight
-		}
-		return 0
-	}
-	// Edges congested last tick, including ones that just cleared.
-	for id, oldW := range tm.congested {
-		newW, ok := newCongested[id]
-		if !ok {
-			newW = baseOf(id)
-		}
-		if oldW > 0 && math.Abs(newW-oldW)/oldW > 0.1 {
-			changed[id] = newW
-		}
-	}
-	// Newly congested edges, compared with free flow.
-	for id, newW := range newCongested {
-		if _, was := tm.congested[id]; was {
-			continue
-		}
-		if base := baseOf(id); base > 0 && math.Abs(newW-base)/base > 0.1 {
-			changed[id] = newW
-		}
-	}
-
 	tm.congested = newCongested
+
+	changed := make(map[int]float64)
+	for id, w := range newCongested {
+		tm.noteWeight(id, w, changed)
+	}
+	// Edges reported congested earlier that have since cleared.
+	for id := range tm.reported {
+		if _, ok := newCongested[id]; !ok {
+			tm.noteWeight(id, tm.graph.Edges[id].BaseWeight, changed)
+		}
+	}
 	return changed
+}
+
+// noteWeight adds id to changed when w is more than 10% from the weight last
+// reported for it. It needs tm.mu held.
+func (tm *TrafficModel) noteWeight(id int, w float64, changed map[int]float64) {
+	base := tm.graph.Edges[id].BaseWeight
+	last, ok := tm.reported[id]
+	if !ok {
+		last = base
+	}
+	free := w <= base*1.0001
+	switch {
+	case last > 0 && math.Abs(w-last)/last > 0.1:
+		changed[id] = w
+		if free {
+			delete(tm.reported, id)
+		} else {
+			tm.reported[id] = w
+		}
+	case free:
+		delete(tm.reported, id) // cleared by less than 10%: nothing to replan for
+	}
 }
 
 func (tm *TrafficModel) calculateCongestionWeight(edge *graph.Edge, density int) float64 {

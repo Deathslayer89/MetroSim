@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/Deathslayer89/MetroSim/internal/agent"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
 )
 
@@ -83,5 +84,30 @@ func TestComputeEdgeWeightsScalesByCongestion(t *testing.T) {
 	got := tm.GetEdgeWeight(0)
 	if math.Abs(got-want) > 1e-9 {
 		t.Errorf("weight at capacity (alpha=1,beta=2): want %v, got %v", want, got)
+	}
+}
+
+// A jam that grows by one car a tick changes less than 10% each tick. It must
+// still be reported every time it grows 10% past the last report.
+func TestGradualJamIsReported(t *testing.T) {
+	g := buildSingleEdgeGraph()
+	e := g.Edges[0]
+	tm := NewTrafficModel(g, DemoCongestionParams())
+	var cars []*agent.Vehicle
+	last := e.BaseWeight
+	reports := 0
+	for n := 1; n <= 80; n++ {
+		cars = append(cars, &agent.Vehicle{ID: n, CurrentEdge: e})
+		tm.UpdateDensities(cars)
+		if w, ok := tm.ComputeEdgeWeights()[0]; ok {
+			reports++
+			last = w
+		}
+		if w := tm.GetEdgeWeight(0); w > last*1.1+1e-9 {
+			t.Fatalf("with %d cars the edge takes %.1f s, over 10%% more than the %.1f s last reported", n, w, last)
+		}
+	}
+	if reports == 0 {
+		t.Fatal("the edge jammed without ever being reported")
 	}
 }

@@ -4,6 +4,7 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
+  "uid": "metrosim",
   "title": "MetroSim marketplace health",
   "schemaVersion": 39,
   "tags": ["metrosim", "marketplace"],

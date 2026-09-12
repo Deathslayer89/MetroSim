@@ -1,0 +1,12 @@
+# Each metrics-aggregator sees only its share of the partitions, so the
+# dashboard sums across them. metrosim serves the fleet gauges from the host.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: metrics-aggregator
+    static_configs:
+      - targets: ["metrics-aggregator-1:9100", "metrics-aggregator-2:9100"]
+  - job_name: metrosim
+    static_configs:
+      - targets: ["host.docker.internal:9100"]

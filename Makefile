@@ -24,7 +24,7 @@ help:
 	@echo "  metrics-aggregator  Run a metrics-aggregator on :9101"
 	@echo "  live-view           Run live-view on :8080"
 	@echo "  replay-trace-writer Rewind the trace-writer group to the earliest offset"
-	@echo "  stack-up            Build and start Kafka, trace-writer, two metrics-aggregators and live-view"
+	@echo "  stack-up            Build and start Kafka, trace-writer, two metrics-aggregators, live-view, Prometheus and Grafana"
 	@echo "  stack-down          Stop the stack"
 	@echo "  stack-logs          Follow every service's logs"
 	@echo "  cluster-up          Start the 3-broker cluster"

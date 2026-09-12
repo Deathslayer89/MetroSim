@@ -1,5 +1,6 @@
 # MetroSim local stack: Kafka in KRaft mode, trace-writer, two
-# metrics-aggregators and live-view. Start it with `make stack-up`.
+# metrics-aggregators, live-view, Prometheus and Grafana. Start it with
+# `make stack-up`.
 #
 # Kafka has two listeners:
 #   PLAINTEXT       kafka:29092      services inside this compose network
@@ -8,6 +9,7 @@
 #   make stack-up
 #   go run ./cmd/metrosim --bus=kafka --osm data/osm/city.osm.pbf --scenario scenarios/downtown.yaml
 #   curl http://localhost:9101/metrics
+#   open http://localhost:3000 for the Grafana dashboard
 services:
   kafka:
     image: apache/kafka:3.8.0
@@ -102,3 +104,32 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    container_name: metrosim_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - metrics-aggregator-1
+      - metrics-aggregator-2
+
+  grafana:
+    image: grafana/grafana:12.0.0
+    container_name: metrosim_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/marketplace_health.json
+    volumes:
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/metrosim.yml:ro
+      - ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/metrosim.yml:ro
+      - ../dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus

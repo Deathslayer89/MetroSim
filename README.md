@@ -47,7 +47,7 @@ Every step of a trip (request, match, cancellation, pickup, dropoff, abandonment
 - `metrics-aggregator` serves Prometheus metrics. Run two and they split the partitions; Prometheus adds them up.
 - `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser.
 
-Smaller pieces: surge per H3 resolution-8 cell (open requests over idle drivers, clamped to 1x to 3x, smoothed over 60 s), optional driver declines and cancellations, riders who give up after `--max-wait`, a Grafana dashboard definition, and a ridge-regression ETA model. The ETA model is a baseline. Trained on 2,000 routed pairs it predicts free-flow trip time with an in-sample R² of 0.89, nearly all of it from distance. Surge and the ETA model can both feed into batch matching (`--surge-premium`, `--eta-weight`); both are off by default and off in the headline.
+Smaller pieces: surge per H3 resolution-8 cell (open requests over idle drivers, clamped to 1x to 3x, smoothed over 60 s), optional driver declines and cancellations, riders who give up after `--max-wait`, a Grafana dashboard, and a ridge-regression ETA model. The ETA model is a baseline. Trained on 2,000 routed pairs it predicts free-flow trip time with an in-sample R² of 0.89, nearly all of it from distance. Surge and the ETA model can both feed into batch matching (`--surge-premium`, `--eta-weight`); both are off by default and off in the headline.
 
 ## Running it
 
@@ -76,12 +76,12 @@ The scenarios:
 The Kafka setup runs in Docker:
 
 ```bash
-make stack-up    # Kafka, trace-writer, two metrics-aggregators, live-view
+make stack-up    # Kafka, trace-writer, two metrics-aggregators, live-view, Prometheus, Grafana
 go run ./cmd/metrosim --bus=kafka --osm data/osm/city.osm.pbf --scenario scenarios/downtown.yaml
-# live map on :8080, trip metrics on :9101 and :9102, fleet gauges on :9100, Parquet in traces/
+# live map on :8080, Grafana on :3000, trip metrics on :9101 and :9102, fleet gauges on :9100, Parquet in traces/
 ```
 
-Prometheus and Grafana aren't in the compose file; scrape those ports and import `dashboards/marketplace_health.json`.
+Prometheus on :9090 scrapes all three metrics endpoints, and Grafana opens on the dashboard from `dashboards/marketplace_health.json` with Prometheus already set up as its datasource.
 
 `make cluster-up` starts a three-broker version (replication factor 3, at least 2 in-sync replicas), where stopping one broker doesn't stop writes. `cmd/replay` moves a consumer group back to an earlier offset, for example to rebuild `traces/` from the log.
 

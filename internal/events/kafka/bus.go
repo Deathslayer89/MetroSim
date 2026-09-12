@@ -18,8 +18,8 @@ import (
 	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
-// unmarshalFailures counts records that failed proto.Unmarshal. Those, and
-// batches whose delivery keeps failing, go to the DLQ, counted by dlqWrites.
+// unmarshalFailures counts records that failed proto.Unmarshal. Those go to the
+// DLQ, counted by dlqWrites.
 var (
 	unmarshalFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "metrosim_events_unmarshal_failures_total",
@@ -37,10 +37,10 @@ var (
 	}, []string{"topic"})
 )
 
-// A batch whose onBatchEnd fails this many times goes to metrosim.dlq.<topic> so
-// the consumer can move on. Retries back off exponentially up to the cap.
-const (
-	endBatchMaxRetries  = 5
+// A batch whose onBatchEnd fails is retried, backing off exponentially up to the
+// cap, until it succeeds: a sink that can't write stalls its partitions rather
+// than dropping trips. Vars so tests can shorten them.
+var (
 	endBatchBaseBackoff = 100 * time.Millisecond
 	endBatchMaxBackoff  = 5 * time.Second
 )
@@ -121,7 +121,7 @@ func (b *Bus) Subscribe(topic, group string, handler func(proto.Message)) error 
 
 // SubscribeBatched calls onBatchEnd after each fetch has gone through onRecord
 // and commits the fetch only once onBatchEnd succeeds, so a crash mid-batch
-// means redelivery rather than loss.
+// means redelivery rather than loss. A failing onBatchEnd is retried.
 func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message), onBatchEnd func() error) error {
 	factory, ok := decoderFor(topic)
 	if !ok {
@@ -167,7 +167,7 @@ func (b *Bus) consume(client *kgo.Client, topic string, factory func() proto.Mes
 		}
 
 		var msgs []proto.Message
-		var raw, dead []*kgo.Record
+		var dead []*kgo.Record
 		fetches.EachRecord(func(rec *kgo.Record) {
 			msg := factory()
 			if err := proto.Unmarshal(rec.Value, msg); err != nil {
@@ -176,46 +176,48 @@ func (b *Bus) consume(client *kgo.Client, topic string, factory func() proto.Mes
 				return
 			}
 			msgs = append(msgs, msg)
-			raw = append(raw, rec)
 		})
 		if len(msgs) == 0 && len(dead) == 0 {
 			continue
 		}
 
-		if len(msgs) > 0 && !b.deliverBatch(msgs, onRecord, onBatchEnd) {
-			if b.ctx.Err() != nil {
-				return // closing mid-retry: leave the batch uncommitted
-			}
-			dead = append(dead, raw...)
+		if len(msgs) > 0 && !b.deliverBatch(topic, msgs, onRecord, onBatchEnd) {
+			return // closing mid-retry: leave the batch uncommitted
 		}
-		// This session has already moved past the batch, so any later commit
-		// would skip it. Keep at the DLQ until it takes the records.
+		// A record that doesn't decode never will, so it goes to the DLQ. Keep at
+		// it until the DLQ takes them, since the commit below moves past them.
 		for len(dead) > 0 && !b.sendToDLQ(topic, dead) {
 			if !b.sleep(endBatchMaxBackoff) {
 				return
 			}
 		}
-		_ = client.CommitUncommittedOffsets(context.Background())
+		if err := client.CommitUncommittedOffsets(context.Background()); err != nil {
+			log.Printf("kafka: commit %s: %v", topic, err)
+		}
 	}
 }
 
 // deliverBatch runs msgs through onRecord and then onBatchEnd, retrying the
-// whole batch with exponential backoff. It returns false when the retries run
-// out or the bus closes.
-func (b *Bus) deliverBatch(msgs []proto.Message, onRecord func(proto.Message), onBatchEnd func() error) bool {
+// whole batch with capped exponential backoff until it succeeds. It returns
+// false only when the bus closes first.
+func (b *Bus) deliverBatch(topic string, msgs []proto.Message, onRecord func(proto.Message), onBatchEnd func() error) bool {
+	backoff := endBatchBaseBackoff
 	for attempt := 1; ; attempt++ {
 		for _, m := range msgs {
 			onRecord(m)
 		}
-		if onBatchEnd == nil || onBatchEnd() == nil {
+		if onBatchEnd == nil {
 			return true
 		}
-		if attempt >= endBatchMaxRetries {
+		err := onBatchEnd()
+		if err == nil {
+			return true
+		}
+		log.Printf("kafka: %s batch of %d failed on attempt %d, retrying in %s: %v", topic, len(msgs), attempt, backoff, err)
+		if !b.sleep(backoff) {
 			return false
 		}
-		if !b.sleep(min(endBatchBaseBackoff<<(attempt-1), endBatchMaxBackoff)) {
-			return false
-		}
+		backoff = min(2*backoff, endBatchMaxBackoff)
 	}
 }
 

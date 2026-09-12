@@ -2,6 +2,7 @@ package traffic
 
 import (
 	"math"
+	"sort"
 	"sync"
 
 	"github.com/Deathslayer89/MetroSim/internal/agent"
@@ -45,15 +46,21 @@ func DemoCongestionParams() CongestionParams {
 	}
 }
 
-// TrafficModel counts vehicles per edge and the congested travel times that
-// follow. Both maps hold occupied edges only, so per-tick work scales with the
+// TrafficModel sets travel times from the density on each link, a stretch of
+// road between intersections. OSM splits roads at every node, crossings and
+// bends included, so half its segments are shorter than 11 m and hold less than
+// a car; counted per segment, a car alone on one was a jam. A car isn't held up
+// by itself either, so a link's density leaves one car out. The maps hold
+// occupied links and congested edges only, so per-tick work scales with the
 // fleet rather than the graph.
 type TrafficModel struct {
 	graph            *graph.Graph
-	edgeDensities    map[int]int     // vehicles per occupied edge
+	linkOf           map[int]int     // edge ID -> its link
+	links            [][]int         // each link's edge IDs, in driving order
+	storage          []float64       // cars each link holds
+	cars             map[int]int     // cars on each occupied link
 	congested        map[int]float64 // travel time of edges slower than free flow
 	reported         map[int]float64 // travel time when last reported changed; free flow if absent
-	edgeCapacities   map[int]float64 // vehicles each edge holds
 	congestionParams CongestionParams
 	mu               sync.RWMutex
 }
@@ -61,33 +68,118 @@ type TrafficModel struct {
 func NewTrafficModel(g *graph.Graph, params CongestionParams) *TrafficModel {
 	tm := &TrafficModel{
 		graph:            g,
-		edgeDensities:    make(map[int]int),
+		cars:             make(map[int]int),
 		congested:        make(map[int]float64),
 		reported:         make(map[int]float64),
-		edgeCapacities:   make(map[int]float64),
 		congestionParams: params,
 	}
-	// One vehicle per 7 m of lane: a 5 m car plus a 2 m gap.
-	for edgeID, edge := range g.Edges {
-		tm.edgeCapacities[edgeID] = float64(edge.Lanes) * edge.Length / 7.0
+	tm.linkOf, tm.links = buildLinks(g)
+	tm.storage = make([]float64, len(tm.links))
+	for l, ids := range tm.links {
+		for _, id := range ids {
+			// One vehicle per 7 m of lane: a 5 m car plus a 2 m gap.
+			e := g.Edges[id]
+			tm.storage[l] += float64(e.Lanes) * e.Length / 7.0
+		}
 	}
 	return tm
 }
 
-// UpdateDensities recounts vehicles per edge from their current positions.
+// buildLinks chains edges joined end to end through nodes where the road
+// neither branches nor merges. Edges go in ID order, so the chains don't depend
+// on map order.
+func buildLinks(g *graph.Graph) (map[int]int, [][]int) {
+	in := make(map[int][]*graph.Edge, len(g.Nodes))
+	ids := make([]int, 0, len(g.Edges))
+	for id, e := range g.Edges {
+		in[e.ToNode] = append(in[e.ToNode], e)
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+
+	// continues returns the edge that carries on from e: the only way out of
+	// e.ToNode other than straight back, when e is the only way in other than
+	// from where that edge leads.
+	continues := func(e *graph.Edge) *graph.Edge {
+		var out *graph.Edge
+		for _, f := range g.Adjacency[e.ToNode] {
+			if f.ToNode == e.FromNode {
+				continue
+			}
+			if out != nil {
+				return nil // the road branches
+			}
+			out = f
+		}
+		if out == nil {
+			return nil
+		}
+		for _, f := range in[e.ToNode] {
+			if f != e && f.FromNode != out.ToNode {
+				return nil // another road merges in
+			}
+		}
+		return out
+	}
+	next := make(map[int]int, len(ids))
+	hasPrev := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		if f := continues(g.Edges[id]); f != nil {
+			next[id] = f.ID
+			hasPrev[f.ID] = true
+		}
+	}
+
+	linkOf := make(map[int]int, len(ids))
+	var links [][]int
+	walk := func(id int) {
+		l := len(links)
+		var chain []int
+		for {
+			if _, seen := linkOf[id]; seen {
+				break
+			}
+			linkOf[id] = l
+			chain = append(chain, id)
+			n, ok := next[id]
+			if !ok {
+				break
+			}
+			id = n
+		}
+		links = append(links, chain)
+	}
+	for _, id := range ids {
+		if !hasPrev[id] {
+			walk(id)
+		}
+	}
+	// What's left runs in loops with no intersection on them.
+	for _, id := range ids {
+		if _, seen := linkOf[id]; !seen {
+			walk(id)
+		}
+	}
+	return linkOf, links
+}
+
+// UpdateDensities recounts vehicles per link from their current positions.
 func (tm *TrafficModel) UpdateDensities(vehicles []*agent.Vehicle) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	tm.edgeDensities = make(map[int]int, len(tm.edgeDensities))
+	tm.cars = make(map[int]int, len(tm.cars))
 	for _, vehicle := range vehicles {
-		if vehicle.CurrentEdge != nil {
-			tm.edgeDensities[vehicle.CurrentEdge.ID]++
+		if vehicle.CurrentEdge == nil {
+			continue
+		}
+		if l, ok := tm.linkOf[vehicle.CurrentEdge.ID]; ok {
+			tm.cars[l]++
 		}
 	}
 }
 
-// ComputeEdgeWeights recomputes travel times on occupied edges and returns the
+// ComputeEdgeWeights recomputes travel times on occupied links and returns the
 // edges whose time has moved more than 10% since it was last reported, which is
 // what triggers replanning. Measuring from the last report rather than the last
 // tick means a jam that grows a little every tick still gets reported.
@@ -95,14 +187,14 @@ func (tm *TrafficModel) ComputeEdgeWeights() map[int]float64 {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	newCongested := make(map[int]float64, len(tm.edgeDensities))
-	for id, density := range tm.edgeDensities {
-		edge := tm.graph.Edges[id]
-		if edge == nil {
+	newCongested := make(map[int]float64, len(tm.congested))
+	for l := range tm.cars {
+		f := tm.linkFactor(l)
+		if f <= 1.0001 {
 			continue
 		}
-		if w := tm.calculateCongestionWeight(edge, density); w > edge.BaseWeight*1.0001 {
-			newCongested[id] = w
+		for _, id := range tm.links[l] {
+			newCongested[id] = tm.graph.Edges[id].BaseWeight * f
 		}
 	}
 	tm.congested = newCongested
@@ -142,8 +234,10 @@ func (tm *TrafficModel) noteWeight(id int, w float64, changed map[int]float64) {
 	}
 }
 
-func (tm *TrafficModel) calculateCongestionWeight(edge *graph.Edge, density int) float64 {
-	return edge.BaseWeight * tm.congestionParams.factor(density, tm.edgeCapacities[edge.ID])
+// linkFactor is link l's slowdown from the cars on it other than one, since a
+// car isn't held up by itself. It needs tm.mu held.
+func (tm *TrafficModel) linkFactor(l int) float64 {
+	return tm.congestionParams.factor(max(0, tm.cars[l]-1), tm.storage[l])
 }
 
 // GetEdgeWeight returns an edge's current travel time: its congested value if
@@ -174,47 +268,56 @@ func (tm *TrafficModel) GetEdgeWeights() map[int]float64 {
 	return out
 }
 
-// GetCongestionFactor returns an edge's current multiplier, 1.0 when empty.
+// GetCongestionFactor returns an edge's current multiplier, 1.0 while its link
+// holds one car or none.
 func (tm *TrafficModel) GetCongestionFactor(edgeID int) float64 {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-	return tm.congestionFactor(edgeID)
+	l, ok := tm.linkOf[edgeID]
+	if !ok {
+		return 1
+	}
+	return tm.linkFactor(l)
 }
 
-// congestionFactor needs tm.mu held.
-func (tm *TrafficModel) congestionFactor(edgeID int) float64 {
-	return tm.congestionParams.factor(tm.edgeDensities[edgeID], tm.edgeCapacities[edgeID])
-}
-
+// GetEdgeDensity returns the vehicles on the edge's link.
 func (tm *TrafficModel) GetEdgeDensity(edgeID int) int {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-	return tm.edgeDensities[edgeID]
+	l, ok := tm.linkOf[edgeID]
+	if !ok {
+		return 0
+	}
+	return tm.cars[l]
 }
 
+// GetEdgeCapacity returns how many vehicles the edge's link holds.
 func (tm *TrafficModel) GetEdgeCapacity(edgeID int) float64 {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-	return tm.edgeCapacities[edgeID]
+	l, ok := tm.linkOf[edgeID]
+	if !ok {
+		return 0
+	}
+	return tm.storage[l]
 }
 
-// CongestionStats summarizes the occupied edges.
+// CongestionStats summarizes the edges of occupied links.
 type CongestionStats struct {
 	TotalEdges     int
-	CongestedEdges int     // over half their capacity
-	AvgCongestion  float64 // mean factor over occupied edges
+	CongestedEdges int     // on links over half full
+	AvgCongestion  float64 // mean factor over edges of occupied links
 	MaxCongestion  float64
-	MaxCongestedID int // -1 when no edge is occupied
+	MaxCongestedID int // an edge of the slowest link; -1 when none is occupied
 }
 
-// GetStats looks at occupied edges only.
+// GetStats looks at occupied links only.
 func (tm *TrafficModel) GetStats() CongestionStats {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	total := len(tm.graph.Edges)
 	stats := CongestionStats{
-		TotalEdges:     total,
+		TotalEdges:     len(tm.graph.Edges),
 		MaxCongestion:  1.0,
 		MaxCongestedID: -1,
 	}
@@ -222,20 +325,20 @@ func (tm *TrafficModel) GetStats() CongestionStats {
 	// Averaging over every edge would dilute any pileup to about 1.0.
 	sumFactor := 0.0
 	occupied := 0
-	for edgeID, density := range tm.edgeDensities {
-		capacity := tm.edgeCapacities[edgeID]
-		if capacity <= 0 {
+	for l, n := range tm.cars {
+		if tm.storage[l] <= 0 {
 			continue
 		}
-		occupied++
-		factor := tm.congestionFactor(edgeID)
-		sumFactor += factor
-		if float64(density)/capacity > 0.5 {
-			stats.CongestedEdges++
+		edges := len(tm.links[l])
+		factor := tm.linkFactor(l)
+		occupied += edges
+		sumFactor += factor * float64(edges)
+		if float64(n)/tm.storage[l] > 0.5 {
+			stats.CongestedEdges += edges
 		}
 		if factor > stats.MaxCongestion {
 			stats.MaxCongestion = factor
-			stats.MaxCongestedID = edgeID
+			stats.MaxCongestedID = tm.links[l][0]
 		}
 	}
 	if occupied > 0 {

@@ -103,6 +103,34 @@ func TestEngineReroutesAroundPileup(t *testing.T) {
 	}
 }
 
+// A car alone on an empty road drives at the speed limit, however finely OSM
+// has cut the road up. Counted per segment, each 3 m piece was over capacity
+// with the car on it, and the drive took four times as long.
+func TestLoneCarDrivesAtFreeFlow(t *testing.T) {
+	g := graph.NewGraph()
+	for i := 0; i <= 50; i++ {
+		g.AddNode(&graph.Node{ID: i, Lat: 37.77 + float64(i)*3/111_000, Lon: -122.42})
+	}
+	for i := 0; i < 50; i++ {
+		g.AddEdge(&graph.Edge{ID: i, FromNode: i, ToNode: i + 1, Length: 3, SpeedLimit: 10, Lanes: 1})
+	}
+	engine := NewEngine(Config{Graph: g, CongestionParams: traffic.DemoCongestionParams(), TickRate: 10})
+	car := engine.SpawnVehicle(0)
+	car.SetDestination(50)
+	if err := car.PlanRoute(); err != nil {
+		t.Fatalf("plan route: %v", err)
+	}
+	ticks := 0
+	for car.CurrentNode != 50 && ticks < 1000 {
+		engine.Tick()
+		ticks++
+	}
+	// 150 m at 10 m/s is 15 s, or 150 ticks; one more covers rounding.
+	if ticks > 151 {
+		t.Errorf("the drive took %.1f s; at the speed limit it takes 15 s", float64(ticks)/10)
+	}
+}
+
 // GetVehicleSnapshots must not race Tick (GetVehicles hands out live pointers).
 func TestGetVehicleSnapshotsRaceFree(t *testing.T) {
 	g := loadGrid(t)
@@ -139,10 +167,9 @@ func TestGetVehicleSnapshotsRaceFree(t *testing.T) {
 	<-done
 }
 
-// Stop must end Run while other goroutines flood it with pause and resume.
 // Stop has to end Run while it's paused, when Run waits on commands rather
 // than ticks.
-func TestStopEndsRunDuringPauseResume(t *testing.T) {
+func TestStopEndsRunWhilePaused(t *testing.T) {
 	engine := NewEngine(Config{
 		Graph:            loadGrid(t),
 		CongestionParams: traffic.DefaultCongestionParams(),

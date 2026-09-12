@@ -86,7 +86,8 @@ func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
 type wayRec struct {
 	nodes      []pmosm.NodeID
 	speedLimit float64
-	lanes      int
+	lanes      int  // lanes along the stored direction
+	lanesBack  int  // lanes against it; unused on one-way roads
 	oneway     bool // travel only in stored direction (after reverse normalization)
 }
 
@@ -156,11 +157,6 @@ func scanWays(path string) ([]wayRec, error) {
 		if speed == 0 {
 			speed = fb
 		}
-		lanes, _ := strconv.Atoi(w.Tags.Find("lanes"))
-		if lanes <= 0 {
-			lanes = 1
-		}
-
 		oneway := w.Tags.Find("oneway")
 		isOneway := oneway == "yes" || oneway == "true" || oneway == "1" || oneway == "-1"
 		// OSM treats motorways and roundabouts as one-way unless tagged otherwise.
@@ -170,6 +166,8 @@ func scanWays(path string) ([]wayRec, error) {
 				isOneway = true
 			}
 		}
+
+		lanes, lanesBack := wayLanes(w.Tags, isOneway)
 
 		nodeIDs := make([]pmosm.NodeID, 0, len(w.Nodes))
 		for _, n := range w.Nodes {
@@ -185,10 +183,29 @@ func scanWays(path string) ([]wayRec, error) {
 			nodes:      nodeIDs,
 			speedLimit: speed,
 			lanes:      lanes,
+			lanesBack:  lanesBack,
 			oneway:     isOneway,
 		})
 	}
 	return ways, scanner.Err()
+}
+
+// wayLanes returns the lanes in each direction. On a two-way road lanes=* counts
+// both directions, so it's split, odd lane forward, unless lanes:forward and
+// lanes:backward say otherwise. Every direction gets at least one lane.
+func wayLanes(tags pmosm.Tags, oneway bool) (forward, backward int) {
+	total, _ := strconv.Atoi(tags.Find("lanes"))
+	if oneway {
+		return max(total, 1), 0
+	}
+	forward, backward = (total+1)/2, total/2
+	if n, err := strconv.Atoi(tags.Find("lanes:forward")); err == nil && n > 0 {
+		forward = n
+	}
+	if n, err := strconv.Atoi(tags.Find("lanes:backward")); err == nil && n > 0 {
+		backward = n
+	}
+	return max(forward, 1), max(backward, 1)
 }
 
 func scanNodes(path string, needed map[pmosm.NodeID]struct{}) (map[pmosm.NodeID]*pmosm.Node, error) {
@@ -258,7 +275,7 @@ func assemble(ways []wayRec, nodes map[pmosm.NodeID]*pmosm.Node) (*graph.Graph, 
 					FromNode:   toID,
 					ToNode:     fromID,
 					Length:     length,
-					Lanes:      w.lanes,
+					Lanes:      w.lanesBack,
 					SpeedLimit: w.speedLimit,
 				})
 				nextEdgeID++

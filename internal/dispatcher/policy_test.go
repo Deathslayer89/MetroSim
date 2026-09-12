@@ -168,3 +168,38 @@ func TestBatchPolicyHoldsForWindow(t *testing.T) {
 		t.Fatalf("post-window call should fire; got %d", len(late))
 	}
 }
+
+// A surge discount is the same for every driver of a request, so however large
+// it is, the request still gets its nearest driver.
+func TestSurgePremiumKeepsTheNearestDriver(t *testing.T) {
+	g := graph.NewGraph()
+	g.AddNode(&graph.Node{ID: 0, Lat: 37.7700, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 1, Lat: 37.7710, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 2, Lat: 37.7705, Lon: -122.4200})
+	vehicles := map[int]*agent.Vehicle{
+		1: agent.NewVehicle(1, 1, g, nil),
+		2: agent.NewVehicle(2, 2, g, nil),
+	}
+	idx := NewH3DriverIndex()
+	for _, v := range vehicles {
+		lat, lon, _ := v.GetPosition()
+		idx.Insert(v.ID, lat, lon)
+	}
+	ctx := MatchCtx{
+		Pending:     []*Request{{ID: 1, PickupNode: 0}},
+		DriverIndex: idx,
+		Vehicles:    vehicles,
+		Graph:       g,
+		SurgeAt:     func(_, _ float64) float64 { return 2 },
+		ETAEstimate: func(from, _ int) float64 {
+			if from == 1 {
+				return 200
+			}
+			return 10
+		},
+	}
+	out := matchBatch(ctx, ctx.Pending, 5, 300, 0)
+	if len(out) != 1 || out[0].DriverID != 2 {
+		t.Errorf("with a 300 s surge premium the request should still get the driver 10 s away, got %+v", out)
+	}
+}

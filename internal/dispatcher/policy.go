@@ -205,6 +205,9 @@ func matchBatch(ctx MatchCtx, pending []*Request, candidatesPerRequest int, surg
 	}
 
 	for i, req := range pending {
+		// The surge discount and the duration bias are the same for every
+		// candidate of a request, so they decide which requests win contested
+		// drivers, never which driver a request gets. Costs can go negative.
 		var surgePenalty float64
 		if ctx.SurgeAt != nil && surgePremium > 0 {
 			pickupNode, err := ctx.Graph.GetNode(req.PickupNode)
@@ -212,8 +215,6 @@ func matchBatch(ctx MatchCtx, pending []*Request, candidatesPerRequest int, surg
 				surgePenalty = surgePremium * (ctx.SurgeAt(pickupNode.Lat, pickupNode.Lon) - 1.0)
 			}
 		}
-		// Equal for every candidate of this request, so it changes which requests
-		// win contested drivers, not which driver a request gets.
 		var durBias float64
 		if etaWeight > 0 && ctx.TripETA != nil {
 			durBias = etaWeight * ctx.TripETA(req.PickupNode, req.DestinationNode)
@@ -223,11 +224,7 @@ func matchBatch(ctx MatchCtx, pending []*Request, candidatesPerRequest int, surg
 			if math.IsInf(eta, 1) {
 				continue
 			}
-			c := eta - surgePenalty + durBias
-			if c < 0 {
-				c = 0
-			}
-			cost[i][driverIdx[did]] = c
+			cost[i][driverIdx[did]] = eta - surgePenalty + durBias
 		}
 	}
 

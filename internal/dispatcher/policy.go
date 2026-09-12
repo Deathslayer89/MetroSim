@@ -44,34 +44,44 @@ type Policy interface {
 	Match(ctx MatchCtx) []Assignment
 }
 
-// computeETA returns the routed seconds from driver's current node to req's
-// pickup using live edge weights when present. Returns +Inf if unreachable.
+// computeETA returns the routed seconds from driver's position to req's pickup
+// using live edge weights when present. Returns +Inf if unreachable. A car
+// partway along an edge has to finish it first, so the time left on it counts.
 func computeETA(ctx MatchCtx, driver *agent.Vehicle, req *Request) float64 {
-	if driver.CurrentNode == req.PickupNode {
-		return 0
+	from, lead := driver.CurrentNode, 0.0
+	if e := driver.CurrentEdge; e != nil {
+		from = e.ToNode
+		lead = (1 - driver.Progress) * edgeTime(ctx, e)
+	}
+	if from == req.PickupNode {
+		return lead
 	}
 	if ctx.ETAEstimate != nil {
-		return ctx.ETAEstimate(driver.CurrentNode, req.PickupNode)
+		return lead + ctx.ETAEstimate(from, req.PickupNode)
 	}
 	var path []*graph.Edge
 	var err error
 	if ctx.EdgeWeights != nil {
-		path, err = ctx.PathPlanner.FindPathWithWeights(driver.CurrentNode, req.PickupNode, ctx.EdgeWeights)
+		path, err = ctx.PathPlanner.FindPathWithWeights(from, req.PickupNode, ctx.EdgeWeights)
 	} else {
-		path, err = ctx.PathPlanner.FindPath(driver.CurrentNode, req.PickupNode)
+		path, err = ctx.PathPlanner.FindPath(from, req.PickupNode)
 	}
 	if err != nil {
 		return math.Inf(1)
 	}
-	var eta float64
+	eta := lead
 	for _, edge := range path {
-		if w, ok := ctx.EdgeWeights[edge.ID]; ok {
-			eta += w
-		} else {
-			eta += edge.BaseWeight
-		}
+		eta += edgeTime(ctx, edge)
 	}
 	return eta
+}
+
+// edgeTime is an edge's live travel time, or free flow when it isn't congested.
+func edgeTime(ctx MatchCtx, e *graph.Edge) float64 {
+	if w, ok := ctx.EdgeWeights[e.ID]; ok {
+		return w
+	}
+	return e.BaseWeight
 }
 
 // GreedyPolicy takes requests in arrival order and gives each the nearest idle

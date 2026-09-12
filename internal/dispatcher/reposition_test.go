@@ -107,3 +107,33 @@ func TestRepositionDoesNotBounceBetweenEqualCells(t *testing.T) {
 		t.Errorf("car repositioned %d times between two equally short cells", n)
 	}
 }
+
+// A repositioning car that has just left the pickup is 90 s from the end of its
+// edge and 100 s back. Batch must cost it that way, not as zero, and take the
+// idle car 20 s away instead.
+func TestBatchCostsMidEdgeCarFromWhereItIs(t *testing.T) {
+	g := graph.NewGraph()
+	g.AddNode(&graph.Node{ID: 0, Lat: 37.7700, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 1, Lat: 37.7790, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 2, Lat: 37.7690, Lon: -122.4200})
+	g.AddEdge(&graph.Edge{ID: 0, FromNode: 0, ToNode: 1, Length: 1000, SpeedLimit: 10, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 1, FromNode: 1, ToNode: 0, Length: 1000, SpeedLimit: 10, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 2, FromNode: 2, ToNode: 0, Length: 200, SpeedLimit: 10, Lanes: 1})
+	planner := pathfinding.NewPathPlanner(g, nil)
+	leaving := agent.NewVehicle(1, 0, g, planner)
+	if err := leaving.Reposition(1, nil); err != nil {
+		t.Fatal(err)
+	}
+	leaving.Move(10)
+	near := agent.NewVehicle(2, 2, g, planner)
+	vehicles := map[int]*agent.Vehicle{1: leaving, 2: near}
+
+	d := NewDispatcher(g, planner, events.NewMemoryBus(), events.NewStamper(events.RunInfo{}))
+	d.SetPolicy(NewBatchPolicy(0))
+	req := &Request{ID: 1, PickupNode: 0, DestinationNode: 1, RequestTime: t0}
+	d.SubmitRequest(req)
+	d.Tick(vehicles, t0, nil)
+	if req.AssignedDriver != 2 {
+		t.Errorf("want the idle car 20 s away, got driver %d", req.AssignedDriver)
+	}
+}

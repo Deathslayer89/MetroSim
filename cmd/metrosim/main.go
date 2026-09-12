@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -57,6 +58,7 @@ func main() {
 	}
 
 	var bus events.Bus
+	var closeBus func()
 	switch *busKind {
 	case "memory":
 		bus = events.NewMemoryBus()
@@ -65,7 +67,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("kafka bus: %v", err)
 		}
-		defer kb.Close()
+		closeBus = kb.Close
 		bus = kb
 		log.Printf("event bus: kafka (seeds=%s)", *kafkaSeeds)
 	default:
@@ -184,40 +186,60 @@ func main() {
 		runHardcodedDemo(engine, g)
 	}
 
-	go engine.Run()
+	runDone := make(chan struct{})
+	go func() {
+		engine.Run()
+		close(runDone)
+	}()
 
 	// With --bus=kafka the browser UI comes from cmd/live-view; the engine only
 	// publishes events.
+	failed := make(chan error, 1)
+	var closeServer func()
 	if *busKind == "memory" {
 		srv := server.NewServer(engine)
 		log.Printf("listening on http://localhost%s", *addr)
 		go func() {
 			if err := srv.Start(*addr); err != nil {
-				log.Fatalf("server: %v", err)
+				failed <- fmt.Errorf("server: %w", err)
 			}
 		}()
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
-		log.Println("metrosim: shutting down")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Close(ctx)
+		closeServer = func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Close(ctx)
+		}
 	} else {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
 		ms := &http.Server{Addr: *metricsAddr, Handler: mux}
 		go func() {
 			if err := ms.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("metrics: %v", err)
+				failed <- fmt.Errorf("metrics: %w", err)
 			}
 		}()
 		log.Printf("kafka bus: fleet metrics on %s; run cmd/live-view for the map", *metricsAddr)
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
-		log.Println("metrosim: shutting down")
-		_ = ms.Close()
+		closeServer = func() { _ = ms.Close() }
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	var err error
+	select {
+	case <-sig:
+	case err = <-failed:
+	}
+	log.Println("metrosim: shutting down")
+	// Stop the simulation before closing the bus, so no tick publishes into it
+	// while it flushes.
+	engine.Stop()
+	<-runDone
+	closeServer()
+	if closeBus != nil {
+		closeBus()
+	}
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 

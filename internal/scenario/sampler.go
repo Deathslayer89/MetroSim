@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -17,7 +18,9 @@ type nodeSampler struct {
 	total float64
 }
 
-func buildNodeSampler(g *graph.Graph, hotspots []Hotspot) *nodeSampler {
+// buildNodeSampler fails on a hotspot that covers no node, which would
+// otherwise hand its share to the others without a word.
+func buildNodeSampler(g *graph.Graph, hotspots []Hotspot) (*nodeSampler, error) {
 	ids := make([]int, 0, len(g.Nodes))
 	for id := range g.Nodes {
 		ids = append(ids, id)
@@ -37,7 +40,7 @@ func buildNodeSampler(g *graph.Graph, hotspots []Hotspot) *nodeSampler {
 			}
 		}
 		if len(inside) == 0 {
-			continue
+			return nil, fmt.Errorf("hotspot %q at (%g, %g) covers no road nodes within %g m", h.Name, h.Lat, h.Lon, h.RadiusM)
 		}
 		per := h.Weight * float64(len(ids)) / float64(len(inside))
 		for _, i := range inside {
@@ -51,7 +54,7 @@ func buildNodeSampler(g *graph.Graph, hotspots []Hotspot) *nodeSampler {
 		sum += w[i]
 		cum[i] = sum
 	}
-	return &nodeSampler{nodes: ids, cumWt: cum, total: sum}
+	return &nodeSampler{nodes: ids, cumWt: cum, total: sum}, nil
 }
 
 func (s *nodeSampler) Sample(rng *rand.Rand) int {

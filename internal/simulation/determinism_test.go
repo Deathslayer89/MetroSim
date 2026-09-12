@@ -71,7 +71,10 @@ func runWaits(t *testing.T, seed int64) []float64 {
 	d.SetRepositioning(dispatcher.DefaultRepositioning(10 * time.Second))
 	engine.SetStartTime(sc.StartTime)
 
-	gen := scenario.NewGenerator(sc, g)
+	gen, err := scenario.NewGenerator(sc, g)
+	if err != nil {
+		t.Fatalf("generator: %v", err)
+	}
 	engine.SetArrivalSource(gen)
 	for _, n := range gen.VehicleSpawnNodes(g) {
 		engine.SpawnVehicle(n)

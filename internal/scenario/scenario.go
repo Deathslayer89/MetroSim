@@ -3,7 +3,9 @@
 package scenario
 
 import (
+	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -52,7 +54,10 @@ func Load(path string) (*Scenario, error) {
 		return nil, err
 	}
 	var s Scenario
-	if err := yaml.Unmarshal(b, &s); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	// A misspelled key would otherwise be dropped without a word.
+	dec.KnownFields(true)
+	if err := dec.Decode(&s); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if err := s.validate(); err != nil {
@@ -87,8 +92,8 @@ func (s *Scenario) validate() error {
 		}
 	}
 	for _, seg := range s.Arrivals.RateSegments {
-		if seg.Rate < 0 {
-			return fmt.Errorf("arrivals.rate_segments rate must be non-negative, got %g", seg.Rate)
+		if !finite(seg.Rate) || seg.Rate < 0 {
+			return fmt.Errorf("arrivals.rate_segments rate must be a finite non-negative number, got %g", seg.Rate)
 		}
 	}
 	for _, h := range s.Arrivals.PickupHotspots {
@@ -105,6 +110,9 @@ func (s *Scenario) validate() error {
 }
 
 func (h Hotspot) validate() error {
+	if !finite(h.Lat) || !finite(h.Lon) || !finite(h.RadiusM) || !finite(h.Weight) {
+		return fmt.Errorf("lat, lon, radius_m and weight must be finite numbers")
+	}
 	if h.RadiusM <= 0 || h.Weight <= 0 {
 		return fmt.Errorf("radius_m and weight must be positive")
 	}
@@ -113,3 +121,5 @@ func (h Hotspot) validate() error {
 	}
 	return nil
 }
+
+func finite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }

@@ -243,7 +243,10 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 	}
 	engine.SetStartTime(scCopy.StartTime)
 
-	gen := scenario.NewGenerator(&scCopy, g)
+	gen, err := scenario.NewGenerator(&scCopy, g)
+	if err != nil {
+		return runResult{}, err
+	}
 	engine.SetArrivalSource(gen)
 	for _, node := range gen.VehicleSpawnNodes(g) {
 		engine.SpawnVehicle(node)

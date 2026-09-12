@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -21,16 +22,22 @@ type Generator struct {
 	nextID   int
 }
 
-func NewGenerator(s *Scenario, g *graph.Graph) *Generator {
-	pickup := buildNodeSampler(g, s.Arrivals.PickupHotspots)
-	dropoff := buildNodeSampler(g, s.Arrivals.DropoffHotspots)
+func NewGenerator(s *Scenario, g *graph.Graph) (*Generator, error) {
+	pickup, err := buildNodeSampler(g, s.Arrivals.PickupHotspots)
+	if err != nil {
+		return nil, fmt.Errorf("pickup_hotspots: %w", err)
+	}
+	dropoff, err := buildNodeSampler(g, s.Arrivals.DropoffHotspots)
+	if err != nil {
+		return nil, fmt.Errorf("dropoff_hotspots: %w", err)
+	}
 	return &Generator{
 		scenario: s,
 		rng:      rand.New(rand.NewSource(s.Seed)),
 		pickup:   pickup,
 		dropoff:  dropoff,
 		nextID:   1,
-	}
+	}, nil
 }
 
 // VehicleSpawnNodes returns Count node IDs for initial vehicle placement:
@@ -123,13 +130,25 @@ func (g *Generator) rateAt(elapsed time.Duration) float64 {
 	return 0
 }
 
-// samplePoisson uses Knuth's algorithm, fine for the per-tick means here (well
-// under 1) but slow once the mean passes about 20.
-func samplePoisson(lambda float64, rng *rand.Rand) int {
-	if lambda <= 0 {
+// samplePoisson draws from a Poisson distribution with Knuth's method, whose
+// exp(-mean) underflows past a mean of about 700. A larger mean is drawn as a
+// sum of smaller ones, which is exact for a Poisson; a mean under 30, like the
+// per-tick means here, takes a single draw.
+func samplePoisson(mean float64, rng *rand.Rand) int {
+	if !(mean > 0) || math.IsInf(mean, 1) {
 		return 0
 	}
-	L := math.Exp(-lambda)
+	const chunk = 30.0
+	n := 0
+	for mean > chunk {
+		n += knuthPoisson(chunk, rng)
+		mean -= chunk
+	}
+	return n + knuthPoisson(mean, rng)
+}
+
+func knuthPoisson(mean float64, rng *rand.Rand) int {
+	L := math.Exp(-mean)
 	k := 0
 	p := 1.0
 	for {

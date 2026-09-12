@@ -21,6 +21,15 @@ func buildTinyGraph(t *testing.T) *graph.Graph {
 	return g
 }
 
+func mustGenerator(t *testing.T, s *Scenario, g *graph.Graph) *Generator {
+	t.Helper()
+	gen, err := NewGenerator(s, g)
+	if err != nil {
+		t.Fatalf("NewGenerator: %v", err)
+	}
+	return gen
+}
+
 func mkScenario(seed int64) *Scenario {
 	return &Scenario{
 		Name:     "test",
@@ -42,7 +51,7 @@ func TestGeneratorDeterministic(t *testing.T) {
 	s := mkScenario(123)
 
 	collect := func() (spawn []int, reqs [][3]int) {
-		gen := NewGenerator(s, g)
+		gen := mustGenerator(t, s, g)
 		spawn = gen.VehicleSpawnNodes(g)
 		const dt = 100 * time.Millisecond
 		for tick := 0; tick < 600; tick++ {
@@ -75,7 +84,7 @@ func TestGeneratorDifferentSeedsDiffer(t *testing.T) {
 	g := buildTinyGraph(t)
 
 	collect := func(seed int64) [][3]int {
-		gen := NewGenerator(mkScenario(seed), g)
+		gen := mustGenerator(t, mkScenario(seed), g)
 		var out [][3]int
 		const dt = 100 * time.Millisecond
 		for tick := 0; tick < 600; tick++ {
@@ -161,7 +170,7 @@ func TestGeneratorArrivalRateTracksLambda(t *testing.T) {
 	const want = 2.0 * 60.0 // mkScenario: 2 requests/s for 60 s
 	total := 0
 	for seed := int64(0); seed < seeds; seed++ {
-		gen := NewGenerator(mkScenario(seed), g)
+		gen := mustGenerator(t, mkScenario(seed), g)
 		for tick := 0; tick < 600; tick++ {
 			total += len(gen.NextArrivals(time.Duration(tick)*dt, dt))
 		}

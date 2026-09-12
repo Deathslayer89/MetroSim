@@ -45,7 +45,10 @@ func TestCountersMatchDispatcher(t *testing.T) {
 	if err := state.SubscribeToBus(engine.Bus()); err != nil {
 		t.Fatal(err)
 	}
-	gen := scenario.NewGenerator(sc, g)
+	gen, err := scenario.NewGenerator(sc, g)
+	if err != nil {
+		t.Fatalf("generator: %v", err)
+	}
 	engine.SetArrivalSource(gen)
 	for _, n := range gen.VehicleSpawnNodes(g) {
 		engine.SpawnVehicle(n)

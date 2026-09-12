@@ -167,7 +167,10 @@ func main() {
 	if sc != nil {
 		log.Printf("scenario: %s (%s)", sc.Name, sc.Description)
 
-		gen := scenario.NewGenerator(sc, g)
+		gen, err := scenario.NewGenerator(sc, g)
+		if err != nil {
+			log.Fatalf("scenario: %v", err)
+		}
 		engine.SetArrivalSource(gen)
 		if !sc.StartTime.IsZero() {
 			engine.SetStartTime(sc.StartTime)

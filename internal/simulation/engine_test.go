@@ -1,13 +1,16 @@
 package simulation
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
 	"github.com/Deathslayer89/MetroSim/internal/traffic"
+	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
 func loadGrid(t *testing.T) *graph.Graph {
@@ -203,5 +206,27 @@ func TestSetSpeedIgnoresSpeedsThatStopOrReverseTime(t *testing.T) {
 	}
 	if got := engine.GetSpeed(); got != 1 {
 		t.Errorf("speed changed to %v", got)
+	}
+}
+
+// Each driver's updates carry its own key, so they stay in order on one
+// partition instead of being spread by the partitioner.
+func TestDriverUpdatesAreKeyedByDriver(t *testing.T) {
+	engine := NewEngine(Config{Graph: loadGrid(t), CongestionParams: traffic.DemoCongestionParams()})
+	engine.SpawnVehicle(0)
+	engine.SpawnVehicle(1)
+	seen, wrong := 0, 0
+	err := events.SubscribeDriverLocationUpdate(engine.Bus(), "test", func(e *eventspb.DriverLocationUpdate) {
+		seen++
+		if e.GetMeta().GetPartitionKey() != fmt.Sprintf("driver:%d", e.DriverId) {
+			wrong++
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.Tick()
+	if seen != 2 || wrong != 0 {
+		t.Errorf("want 2 updates keyed by driver, got %d updates, %d with the wrong key", seen, wrong)
 	}
 }

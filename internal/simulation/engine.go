@@ -1,6 +1,7 @@
 package simulation
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -325,9 +326,12 @@ func (e *Engine) Tick() {
 
 	e.mu.Unlock()
 
+	// Keys keep each driver's and each cell's updates in order on one partition.
 	for _, d := range driverEvents {
+		meta := e.stamper.MetaFor(publishTime)
+		meta.PartitionKey = fmt.Sprintf("driver:%d", d.id)
 		_ = events.PublishDriverLocationUpdate(e.bus, &eventspb.DriverLocationUpdate{
-			Meta:     e.stamper.MetaFor(publishTime),
+			Meta:     meta,
 			DriverId: int64(d.id),
 			Lat:      d.lat,
 			Lon:      d.lon,
@@ -335,8 +339,10 @@ func (e *Engine) Tick() {
 		})
 	}
 	for _, s := range surgeEvents {
+		meta := e.stamper.MetaFor(publishTime)
+		meta.PartitionKey = "cell:" + s.cell
 		_ = events.PublishSurgeUpdated(e.bus, &eventspb.SurgeUpdated{
-			Meta:       e.stamper.MetaFor(publishTime),
+			Meta:       meta,
 			H3Cell:     s.cell,
 			Multiplier: s.multiplier,
 		})

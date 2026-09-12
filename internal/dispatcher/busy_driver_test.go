@@ -7,6 +7,7 @@ import (
 	"github.com/Deathslayer89/MetroSim/internal/agent"
 	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/pathfinding"
+	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
 func ridesHeldBy(d *Dispatcher, driverID int) int {
@@ -67,5 +68,41 @@ func TestCarMatchedOnItsPickupIsNotRepositioned(t *testing.T) {
 	d.Tick(vehicles, now.Add(100*time.Millisecond), nil)
 	if car.State != agent.StateEnroute || car.Destination != 1 {
 		t.Errorf("want the rider picked up and the car heading to node 1, got %s to node %d", car.State, car.Destination)
+	}
+}
+
+// Keying by request keeps one trip's events in order on one partition and
+// spreads trips evenly: two trips from the same corner get different keys.
+func TestTripEventsAreKeyedByRequest(t *testing.T) {
+	g := loadGrid(t)
+	planner := pathfinding.NewPathPlanner(g, nil)
+	bus := events.NewMemoryBus()
+	d := NewDispatcher(g, planner, bus, events.NewStamper(events.RunInfo{}))
+	keys := make(map[int64]map[string]bool)
+	note := func(req int64, m *eventspb.Meta) {
+		if keys[req] == nil {
+			keys[req] = make(map[string]bool)
+		}
+		keys[req][m.GetPartitionKey()] = true
+	}
+	if err := events.SubscribeTripRequested(bus, "test", func(e *eventspb.TripRequested) { note(e.RequestId, e.Meta) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := events.SubscribeTripMatched(bus, "test", func(e *eventspb.TripMatched) { note(e.RequestId, e.Meta) }); err != nil {
+		t.Fatal(err)
+	}
+
+	vehicles := map[int]*agent.Vehicle{1: agent.NewVehicle(1, 0, g, planner)}
+	d.SubmitRequest(&Request{ID: 1, PickupNode: 3, DestinationNode: 8, RequestTime: t0})
+	d.SubmitRequest(&Request{ID: 2, PickupNode: 3, DestinationNode: 8, RequestTime: t0})
+	d.Tick(vehicles, t0, nil)
+
+	if len(keys[1]) != 1 || len(keys[2]) != 1 {
+		t.Fatalf("each trip's events should share one key, got %v and %v", keys[1], keys[2])
+	}
+	for k := range keys[1] {
+		if keys[2][k] {
+			t.Errorf("two trips from the same pickup share the key %q", k)
+		}
 	}
 }

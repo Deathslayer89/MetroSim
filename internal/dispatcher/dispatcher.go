@@ -19,15 +19,9 @@ import (
 	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
-// pickupKey keys a request's events by the H3 r6 cell of its pickup, so one
-// trip's events stay in order on one partition and nearby trips share it. It
-// falls back to the request ID when the pickup node is unknown.
-func (d *Dispatcher) pickupKey(requestID, pickupNode int) string {
-	if n, err := d.graph.GetNode(pickupNode); err == nil {
-		if cell, err := h3.LatLngToCell(h3.LatLng{Lat: n.Lat, Lng: n.Lon}, 6); err == nil {
-			return cell.String()
-		}
-	}
+// tripKey keys all of a request's events by its ID, so one trip's events stay
+// in order on one partition while trips spread evenly across partitions.
+func tripKey(requestID int) string {
 	return fmt.Sprintf("trip:%d", requestID)
 }
 
@@ -238,7 +232,7 @@ func (d *Dispatcher) SubmitRequest(req *Request) {
 	d.notePickup(req)
 	d.mu.Unlock()
 	meta := d.stamper.MetaFor(req.RequestTime)
-	meta.PartitionKey = d.pickupKey(req.ID, req.PickupNode)
+	meta.PartitionKey = tripKey(req.ID)
 	_ = events.PublishTripRequested(d.bus, &eventspb.TripRequested{
 		Meta:            meta,
 		RequestId:       int64(req.ID),
@@ -291,7 +285,7 @@ func (d *Dispatcher) expireStale(now time.Time) []*eventspb.TripAbandoned {
 		}
 		d.abandoned++
 		meta := d.stamper.MetaFor(now)
-		meta.PartitionKey = d.pickupKey(req.ID, req.PickupNode)
+		meta.PartitionKey = tripKey(req.ID)
 		out = append(out, &eventspb.TripAbandoned{
 			Meta:       meta,
 			RequestId:  int64(req.ID),
@@ -381,7 +375,7 @@ func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime ti
 		d.driverIndex.Remove(a.DriverID)
 		matched[a.Request.ID] = struct{}{}
 		meta := d.stamper.MetaFor(currentTime)
-		meta.PartitionKey = d.pickupKey(a.Request.ID, a.Request.PickupNode)
+		meta.PartitionKey = tripKey(a.Request.ID)
 		out = append(out, &eventspb.TripMatched{
 			Meta:           meta,
 			RideId:         int64(ride.ID),
@@ -428,7 +422,7 @@ func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentT
 				d.pendingQueue = append(d.pendingQueue, ride.Request)
 				delete(d.activeRides, rideID)
 				meta := d.stamper.MetaFor(currentTime)
-				meta.PartitionKey = d.pickupKey(ride.Request.ID, ride.Request.PickupNode)
+				meta.PartitionKey = tripKey(ride.Request.ID)
 				cancels = append(cancels, &eventspb.TripCancelled{
 					Meta:      meta,
 					RideId:    int64(ride.ID),
@@ -450,7 +444,7 @@ func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentT
 				ride.State = RideStatePickedUp
 
 				puMeta := d.stamper.MetaFor(currentTime)
-				puMeta.PartitionKey = d.pickupKey(ride.Request.ID, ride.Request.PickupNode)
+				puMeta.PartitionKey = tripKey(ride.Request.ID)
 				pickups = append(pickups, &eventspb.TripPickedUp{
 					Meta:     puMeta,
 					RideId:   int64(ride.ID),
@@ -471,7 +465,7 @@ func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentT
 					continue
 				}
 				cMeta := d.stamper.MetaFor(currentTime)
-				cMeta.PartitionKey = d.pickupKey(ride.Request.ID, ride.Request.PickupNode)
+				cMeta.PartitionKey = tripKey(ride.Request.ID)
 				completes = append(completes, &eventspb.TripCompleted{
 					Meta:          cMeta,
 					RideId:        int64(ride.ID),

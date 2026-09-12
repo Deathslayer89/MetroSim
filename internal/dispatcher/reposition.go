@@ -74,8 +74,9 @@ func (d *Dispatcher) repositionIdle(vehicles map[int]*agent.Vehicle, now time.Ti
 	if r.IdleAfter <= 0 {
 		return
 	}
+	busy := d.busyDrivers()
 	for id, v := range vehicles {
-		if !v.IsIdle() {
+		if !v.IsIdle() || busy[id] {
 			delete(d.idleSince, id)
 		} else if _, ok := d.idleSince[id]; !ok {
 			d.idleSince[id] = now
@@ -104,7 +105,7 @@ func (d *Dispatcher) repositionIdle(vehicles map[int]*agent.Vehicle, now time.Ti
 	}
 	ids := make([]int, 0, len(vehicles))
 	for id, v := range vehicles {
-		if !v.IsAvailable() {
+		if !v.IsAvailable() || busy[id] {
 			continue
 		}
 		ids = append(ids, id)

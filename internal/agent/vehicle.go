@@ -252,7 +252,9 @@ func (v *Vehicle) IsEnroute() bool {
 	return v.State == StateEnroute
 }
 
-// IsAvailable reports whether the dispatcher may assign the vehicle.
+// IsAvailable reports whether the vehicle's state lets it take a ride. A car
+// standing at its target is Idle even with a rider aboard, so the dispatcher
+// also checks its own rides.
 func (v *Vehicle) IsAvailable() bool {
 	return v.State == StateIdle || v.State == StateRepositioning
 }

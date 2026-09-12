@@ -303,11 +303,23 @@ func (d *Dispatcher) expireStale(now time.Time) []*eventspb.TripAbandoned {
 	return out
 }
 
+// busyDrivers returns the drivers holding an active ride. A car already at its
+// target stays Idle, so its state alone can't say whether it's free. It needs
+// d.mu held.
+func (d *Dispatcher) busyDrivers() map[int]bool {
+	busy := make(map[int]bool, len(d.activeRides))
+	for _, ride := range d.activeRides {
+		busy[ride.Driver.ID] = true
+	}
+	return busy
+}
+
 // runMatching returns the TripMatched payloads to publish after d.mu is released.
 func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime time.Time, edgeWeights map[int]float64) []*eventspb.TripMatched {
+	busy := d.busyDrivers()
 	d.driverIndex.Clear()
 	for _, vehicle := range vehicles {
-		if vehicle.IsAvailable() {
+		if vehicle.IsAvailable() && !busy[vehicle.ID] {
 			lat, lon, err := vehicle.GetPosition()
 			if err == nil {
 				d.driverIndex.Insert(vehicle.ID, lat, lon)
@@ -334,7 +346,7 @@ func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime ti
 	out := make([]*eventspb.TripMatched, 0, len(assignments))
 	for _, a := range assignments {
 		driver, ok := vehicles[a.DriverID]
-		if !ok || !driver.IsAvailable() {
+		if !ok || !driver.IsAvailable() || busy[a.DriverID] {
 			continue
 		}
 		// A declined request stays queued and the driver stays available.
@@ -365,6 +377,7 @@ func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime ti
 		}
 		d.nextRideID++
 		d.activeRides[ride.ID] = ride
+		busy[a.DriverID] = true
 		d.driverIndex.Remove(a.DriverID)
 		matched[a.Request.ID] = struct{}{}
 		meta := d.stamper.MetaFor(currentTime)

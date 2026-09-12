@@ -6,7 +6,7 @@
 | scenario | `scenarios/downtown.yaml`, 60 min, 180 vehicles |
 | seeds | 1 to 10, each run once per policy |
 | command | `go run ./cmd/experiment --osm data/osm/city.osm.pbf --scenario scenarios/downtown.yaml --replicates 10 --policies batch,batch+reposition` |
-| commit | `feeaba2` |
+| commit | `9e2df3b` |
 
 ## All trips
 

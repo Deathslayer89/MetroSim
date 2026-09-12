@@ -4,23 +4,23 @@
 
 A ride-hailing dispatch simulator running on San Francisco's road network. I wanted to know whether holding requests for a few seconds and solving the assignment for the whole batch beats handing each request, as it arrives, to the nearby driver who can reach it soonest, on a real street grid rather than a toy one. MetroSim runs both policies against identical, seeded demand and compares how long riders wait for pickup.
 
-On the downtown scenario, batch matching cuts the mean wait from 149.5 s to 133.5 s:
+On the downtown scenario it doesn't. Batch matching comes out slightly slower:
 
 ![Pickup wait CDF, greedy vs batch](experiments/headline/wait_cdf.svg)
 
 | policy | riders picked up | mean wait | p50 | p95 |
 |---|---:|---:|---:|---:|
-| greedy | 4,258 (100.0%) | 149.5 s | 100.8 s | 415.5 s |
+| greedy | 4,259 (100.0%) | 132.3 s | 90.6 s | 365.3 s |
 | batch, 3 s window | 4,259 (100.0%) | 133.5 s | 92.4 s | 368.8 s |
 
-That's ten seeds per policy, one simulated hour each: 180 cars, about 430 requests in the hour, pickups concentrated in the Financial District, SoMa, the Mission and the Marina. A seed gives both policies exactly the same riders, so the comparison is paired. Batch had the lower mean wait in 10 of 10 seeds, and the mean per-seed difference is -16.0 s with a 95% bootstrap interval of -18.5 to -13.3 s. The full report, with the command and commit that produced it, is [experiments/headline/report.md](experiments/headline/report.md).
+That's ten seeds per policy, one simulated hour each: 180 cars, about 430 requests in the hour, pickups concentrated in the Financial District, SoMa, the Mission and the Marina. A seed gives both policies exactly the same riders, so the comparison is paired. Greedy had the lower mean wait in 10 of 10 seeds, and batch's mean per-seed difference is +1.2 s with a 95% bootstrap interval of +1.0 to +1.5 s. Holding a request for up to 3 s adds about 1.5 s on average, and solving the batch jointly doesn't win that back here. Ranking greedy's drivers by straight-line distance instead, as a first version of this comparison did, makes batch look 16 s faster: that gap was the ranking, not the batching. The full report, with the command and commit that produced it, is [experiments/headline/report.md](experiments/headline/report.md).
 
 ```bash
 make fetch-osm    # ~30 MB San Francisco extract from bbbike.org
 make experiment   # 20 one-hour runs; about 6 minutes on 20 cores
 ```
 
-On this scenario, moving idle cars helps more than matching them better. Sending cars that have sat idle for two minutes toward recent demand cuts the batch policy's mean wait from 133.5 s to 94.0 s, on the same ten seeds:
+What does help is moving idle cars. Sending cars that have sat idle for two minutes toward recent demand cuts the batch policy's mean wait from 133.5 s to 94.0 s, on the same ten seeds:
 
 | policy | riders picked up | mean wait | p50 | p95 |
 |---|---:|---:|---:|---:|
@@ -118,7 +118,7 @@ experiments/reposition/ batch with and without repositioning
 - The headline compares matching alone, with repositioning off, so idle cars stay where they dropped someone off. Riders don't react to prices, and drivers have no preferences.
 - Repositioning is judged on waits alone. Nothing reports the empty kilometers it adds.
 - Congestion uses a steeper curve than textbook BPR: alpha 1 and beta 2 instead of 0.15 and 4, capped at 5x. With a few hundred cars the textbook curve barely moves, so this one exaggerates congestion to make it matter.
-- Waits count every rider who was picked up, including riders still aboard when a run stops. A rider never picked up has no wait and is left out; in both reports that's at most 1 of 4,259 requests.
+- Waits count every rider who was picked up, including riders still aboard when a run stops. A rider never picked up has no wait and is left out; in both reports every request was picked up.
 - Routes are within 3x optimal by construction. In the 100-pair test the worst one took 54% longer than the best path.
 - Region sharding runs in one process. Splitting it across processes needs a way to hand off drivers near region boundaries, and that isn't written.
 - `live-view` rebuilds its whole snapshot ten times a second and sends it to every client, which won't hold up for a fleet in the tens of thousands. Replaying every topic from the start on launch also gets slower as the log grows.

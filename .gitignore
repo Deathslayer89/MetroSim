@@ -13,6 +13,7 @@ traces/
 /replay
 /train-eta
 
-# Experiment runs; only experiments/headline/ is tracked.
+# Experiment runs; only the ones the README cites are tracked.
 experiments/*
 !experiments/headline/
+!experiments/reposition/

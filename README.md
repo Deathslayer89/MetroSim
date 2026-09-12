@@ -20,6 +20,15 @@ make fetch-osm    # ~30 MB San Francisco extract from bbbike.org
 make experiment   # 20 one-hour runs; about 6 minutes on 20 cores
 ```
 
+On this scenario, moving idle cars helps more than matching them better. Sending cars that have sat idle for two minutes toward recent demand cuts the batch policy's mean wait by another 38 seconds, on the same ten seeds:
+
+| policy | trips completed | mean wait | p50 | p95 |
+|---|---:|---:|---:|---:|
+| batch | 4,221 (99.1%) | 124 s | 89 s | 324 s |
+| batch with repositioning | 4,229 (99.3%) | 86 s | 50 s | 312 s |
+
+Repositioning won in all ten seeds, with a 95% bootstrap interval of -39.7 to -36.0 s on the per-seed difference. It helps the typical rider far more than the unluckiest one: the median wait falls by 39 s, p95 by only 12 s. Cars made about 830 repositioning trips per run, four or five per car per hour, and the settings aren't tuned. The report is [experiments/reposition/report.md](experiments/reposition/report.md).
+
 ## How it works
 
 The map is an OpenStreetMap extract of San Francisco and the north end of the peninsula: drivable roads only, one-way rules applied, speeds from `maxspeed` or a default for the road class. Raw extracts are full of dead ends and one-way traps at the edges, so the loader keeps only the largest strongly connected component. That leaves 240,128 nodes and 440,814 edges, and every node can reach every other.
@@ -28,7 +37,7 @@ Routing is A* on travel time with a weighted heuristic: straight-line distance o
 
 Each edge's travel time follows a BPR curve on the number of cars on it. Cars move against those times and replan, at most once a simulated second, when an edge still ahead of them changes by more than 10%.
 
-Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one the nearest driver that can reach it. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, which I wrote and test against brute force. A region-sharded variant solves each H3 resolution-5 region on its own. With `--reposition-after`, a car idle that long drives toward the nearby area where recent pickups most outnumber free cars, and can still be matched on the way. The experiment runner treats this as a policy variant, as in `--policies batch,batch+reposition`.
+Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one the nearest driver that can reach it. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, which I wrote and test against brute force. A region-sharded variant solves each H3 resolution-5 region on its own. With `--reposition-after`, a car idle that long drives to the H3 resolution-8 cell within three rings, about 2.5 km, where the last 15 minutes of pickups most outnumber free cars. It can still be matched on the way. The experiment runner treats this as a policy variant, as in `--policies batch,batch+reposition`.
 
 Demand comes from scenario files: a piecewise-linear arrival rate, Poisson arrivals, and hotspots that each take a stated share of pickups or dropoffs. The seed fixes everything, so two runs with the same seed produce identical trips, and a test checks exactly that.
 
@@ -101,11 +110,13 @@ scenarios/              scenario files
 deploy/                 Dockerfile and compose files
 dashboards/             Grafana dashboard
 experiments/headline/   the run behind the numbers above
+experiments/reposition/ batch with and without repositioning
 ```
 
 ## Limitations
 
-- The headline compares matching alone. Repositioning is off, so idle cars stay where they dropped someone off. Riders don't react to prices, and drivers have no preferences.
+- The headline compares matching alone, with repositioning off, so idle cars stay where they dropped someone off. Riders don't react to prices, and drivers have no preferences.
+- Repositioning is judged on waits alone. Nothing reports the empty kilometers it adds.
 - Congestion uses a steeper curve than textbook BPR: alpha 1 and beta 2 instead of 0.15 and 4, capped at 5x. With a few hundred cars the textbook curve barely moves, so this one exaggerates congestion to make it matter.
 - Waits are measured on completed trips. Both policies complete 99% or more of requests in the headline, so little is left out.
 - Routes are within 3x optimal by construction. In the 100-pair test the worst one took 54% longer than the best path.

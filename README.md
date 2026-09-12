@@ -4,30 +4,35 @@
 
 A ride-hailing dispatch simulator running on San Francisco's road network. I wanted to know whether holding requests for a few seconds and solving the assignment for the whole batch beats handing each request, as it arrives, to the nearby driver who can reach it soonest, on a real street grid rather than a toy one. MetroSim runs both policies against identical, seeded demand and compares how long riders wait for pickup.
 
-On the downtown scenario it doesn't. Batch matching comes out slightly slower:
+It depends on how busy the fleet is. At the downtown scenario's normal demand batching comes out slightly slower, and it only pulls ahead once riders start queueing for cars:
 
-![Pickup wait CDF, greedy vs batch](experiments/headline/wait_cdf.svg)
+![Mean pickup wait by demand, greedy vs batch](experiments/headline/demand.svg)
 
-| policy | riders picked up | mean wait | p50 | p95 |
-|---|---:|---:|---:|---:|
-| greedy | 4,259 (100.0%) | 132.3 s | 90.6 s | 365.3 s |
-| batch, 3 s window | 4,259 (100.0%) | 133.5 s | 92.4 s | 368.8 s |
+| demand | requests an hour | greedy mean wait | batch mean wait | batch minus greedy, 95% CI | batch faster in |
+|---|---:|---:|---:|---:|---:|
+| 1x | 426 | 112.5 s | 113.8 s | +1.3 s [+1.1, +1.6] | 0 of 10 seeds |
+| 1.25x | 529 | 134.0 s | 134.8 s | +0.8 s [+0.1, +1.4] | 3 of 10 |
+| 1.5x | 639 | 168.6 s | 168.6 s | 0.0 s [-2.3, +2.2] | 4 of 10 |
+| 1.75x | 748 | 220.0 s | 215.9 s | -4.0 s [-7.8, -0.3] | 7 of 10 |
+| 2x | 857 | 358.3 s | 258.2 s | -98.6 s [-137.4, -59.3] | 9 of 10 |
 
-That's ten seeds per policy, one simulated hour each: 180 cars, about 430 requests in the hour, pickups concentrated in the Financial District, SoMa, the Mission and the Marina. A seed gives both policies exactly the same riders, so the comparison is paired. Greedy had the lower mean wait in 10 of 10 seeds, and batch's mean per-seed difference is +1.2 s with a 95% bootstrap interval of +1.0 to +1.5 s. Holding a request for up to 3 s adds about 1.5 s on average, and solving the batch jointly doesn't win that back here. Ranking greedy's drivers by straight-line distance instead, as a first version of this comparison did, makes batch look 16 s faster: that gap was the ranking, not the batching. The full report, with the command and commit that produced it, is [experiments/headline/report.md](experiments/headline/report.md).
+Each row is ten seeds per policy, one simulated hour each, with 180 cars and pickups concentrated in the Financial District, SoMa, the Mission and the Marina; the multiplier scales the scenario's arrival rate. A seed gives both policies exactly the same riders, so the comparison is paired, and the interval is a bootstrap over the ten per-seed differences. Every rider counts, including the few never picked up, with the time they had waited when the run ended.
+
+At normal demand a 3-second window collects 0.35 new requests on average, so there's rarely a second request to trade drivers with, and holding each one for up to 3 s leaves batch 1.3 s slower, in every seed. As demand grows, requests start waiting for a free car, and the backlog gives the solver something to trade. At 2x, batch cuts the mean wait by 99 s and p95 from 1,100 s to 800 s, though the gap varies a lot by seed, from nothing in two seeds to 215 s in another. A first version of this comparison ranked greedy's drivers by straight-line distance and showed batch 16 s faster at normal demand; that gap was the ranking, not the batching. The full report, with the command and commit that produced it, is [experiments/headline/report.md](experiments/headline/report.md).
 
 ```bash
 make fetch-osm    # ~30 MB San Francisco extract from bbbike.org
-make experiment   # 20 one-hour runs; about 6 minutes on 20 cores
+make experiment   # 100 one-hour runs; about 7 minutes on 8 cores
 ```
 
-What does help is moving idle cars. Sending cars that have sat idle for two minutes toward recent demand cuts the batch policy's mean wait from 133.5 s to 94.0 s, on the same ten seeds:
+What helps at normal demand is moving idle cars. Sending cars that have sat idle for two minutes toward recent demand cuts the batch policy's mean wait from 113.8 s to 79.1 s, on the same ten seeds:
 
 | policy | riders picked up | mean wait | p50 | p95 |
 |---|---:|---:|---:|---:|
-| batch | 4,259 (100.0%) | 133.5 s | 92.4 s | 368.8 s |
-| batch with repositioning | 4,259 (100.0%) | 94.0 s | 51.5 s | 342.4 s |
+| batch | 4,259 (100.0%) | 113.8 s | 78.7 s | 305.1 s |
+| batch with repositioning | 4,259 (100.0%) | 79.1 s | 43.7 s | 291.2 s |
 
-Repositioning won in all ten seeds, with a mean per-seed difference of -39.5 s and a 95% bootstrap interval of -41.9 to -36.9 s. The median wait falls by 40.9 s and p95 by 26.4 s. Cars made 582 repositioning trips per run, about 3.2 per car per hour, and the settings aren't tuned. The report is [experiments/reposition/report.md](experiments/reposition/report.md).
+Repositioning won in all ten seeds, with a mean per-seed difference of -34.8 s and a 95% bootstrap interval of -36.6 to -32.6 s. The median wait falls by 35.0 s and p95 by 13.9 s. Cars made 600 repositioning trips per run, about 3.3 per car per hour, and the settings aren't tuned. The report is [experiments/reposition/report.md](experiments/reposition/report.md).
 
 ## How it works
 
@@ -37,7 +42,7 @@ Routing is A* on travel time with a weighted heuristic: straight-line distance o
 
 Travel times follow a BPR curve on density, counted per link: a stretch of road between two intersections. OSM splits a road at every node, crossings and bends included, so half of the 440,814 segments are under 11 m, too short to hold a car. Counted per segment, one car on a short segment was enough to jam it, and in a downtown run 23% of all driving time was on edges slowed by more than 10%. Merged through nodes where the road neither branches nor merges, the segments make 119,520 links with a median length of 55 m. A link's density also leaves one car out, since a car isn't held up by itself, and in the same run almost no driving time is on an edge slowed by more than 10%. Cars move against those times and replan, at most once a simulated second, when an edge still ahead of them changes by more than 10%.
 
-Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one whichever of its five nearest free drivers can reach it soonest by road. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, which I wrote and test against brute force. Both policies score drivers by the same routed pickup time, so the headline measures the batching alone. A region-sharded variant solves each H3 resolution-5 region on its own. With `--reposition-after`, a car idle that long drives to the H3 resolution-8 cell within three rings, about 2.5 km, where the last 15 minutes of pickups most outnumber free cars, as long as that cell is at least two cars shorter than its own. It can still be matched on the way. The experiment runner treats this as a policy variant, as in `--policies batch,batch+reposition`.
+Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one whichever of its five nearest free drivers can reach it soonest by road. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, the standard O(n³) version, checked against brute force on small cases. Both policies score drivers by the same routed pickup time, so the headline measures the batching alone. A region-sharded variant solves each H3 resolution-5 region on its own. With `--reposition-after`, a car idle that long drives to the H3 resolution-8 cell within three rings, about 2.5 km, where the last 15 minutes of pickups most outnumber free cars, as long as that cell is at least two cars shorter than its own. It can still be matched on the way. The experiment runner treats this as a policy variant, as in `--policies batch,batch+reposition`.
 
 Demand comes from scenario files: a piecewise-linear arrival rate, Poisson arrivals, and hotspots that each take a stated share of pickups or dropoffs. The seed fixes everything, so two runs with the same seed produce identical trips, and a test checks exactly that.
 

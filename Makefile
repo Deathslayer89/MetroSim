@@ -14,7 +14,7 @@ help:
 	@echo "  vet                 go vet ./..."
 	@echo "  lint                Run staticcheck, installing it if missing"
 	@echo "  demo                Quick A/B run on the CSV test grid"
-	@echo "  experiment          The README's headline A/B run on San Francisco (needs fetch-osm)"
+	@echo "  experiment          The README's greedy vs batch runs across demand levels on San Francisco (needs fetch-osm)"
 	@echo "  fetch-osm           Download the San Francisco OSM extract (~30 MB)"
 	@echo "  train-eta           Fit models/eta.json on routed pairs from the SF graph"
 	@echo "  kafka-up            Start the Kafka broker on its own"
@@ -51,7 +51,7 @@ demo:
 	$(GO) run ./cmd/experiment --scenario scenarios/smoke.yaml --replicates 2
 
 experiment:
-	$(GO) run ./cmd/experiment --osm $(OSM) --scenario scenarios/downtown.yaml --replicates 10
+	$(GO) run ./cmd/experiment --osm $(OSM) --scenario scenarios/downtown.yaml --replicates 10 --demand 1,1.25,1.5,1.75,2
 
 fetch-osm:
 	bash data/osm/fetch.sh

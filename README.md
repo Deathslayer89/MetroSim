@@ -118,7 +118,7 @@ experiments/reposition/ batch with and without repositioning
 - The headline compares matching alone, with repositioning off, so idle cars stay where they dropped someone off. Riders don't react to prices, and drivers have no preferences.
 - Repositioning is judged on waits alone. Nothing reports the empty kilometers it adds.
 - Congestion uses a steeper curve than textbook BPR: alpha 1 and beta 2 instead of 0.15 and 4, capped at 5x. With a few hundred cars the textbook curve barely moves, so this one exaggerates congestion to make it matter.
-- Waits are measured on completed trips. Both policies complete 99% or more of requests in the headline, so little is left out.
+- Waits count every rider who was picked up, including riders still aboard when a run stops. A rider never picked up has no wait and is left out.
 - Routes are within 3x optimal by construction. In the 100-pair test the worst one took 54% longer than the best path.
 - Region sharding runs in one process. Splitting it across processes needs a way to hand off drivers near region boundaries, and that isn't written.
 - `live-view` rebuilds its whole snapshot ten times a second and sends it to every client, which won't hold up for a fleet in the tens of thousands.

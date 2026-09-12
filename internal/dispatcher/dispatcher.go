@@ -515,3 +515,17 @@ func (d *Dispatcher) GetCompletedRides() []*Ride {
 	copy(rides, d.completedRides)
 	return rides
 }
+
+// RidesInProgress returns active rides whose rider is aboard, in ride-ID order.
+func (d *Dispatcher) RidesInProgress() []*Ride {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []*Ride
+	for _, r := range d.activeRides {
+		if r.State == RideStatePickedUp {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}

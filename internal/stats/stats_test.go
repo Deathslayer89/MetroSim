@@ -28,7 +28,29 @@ func TestMean(t *testing.T) {
 	}
 }
 
-func TestBootstrapMeanCICoversMeanAndNarrows(t *testing.T) {
+// Across many samples from a known distribution, the 95% interval should hold
+// the true mean about 95% of the time. One interval can't show that; a
+// mis-indexed percentile or a 50% interval would show up here.
+func TestBootstrapMeanCICoverage(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	const trials, n = 400, 30
+	covered := 0
+	xs := make([]float64, n)
+	for i := 0; i < trials; i++ {
+		for j := range xs {
+			xs[j] = 5 + rng.NormFloat64()
+		}
+		lo, hi := BootstrapMeanCI(xs, 1000, rng)
+		if lo <= 5 && 5 <= hi {
+			covered++
+		}
+	}
+	if rate := float64(covered) / trials; rate < 0.90 || rate > 0.985 {
+		t.Errorf("95%% interval held the true mean in %.1f%% of %d samples", 100*rate, trials)
+	}
+}
+
+func TestBootstrapMeanCINarrowsWithMoreData(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	small := make([]float64, 10)
 	large := make([]float64, 1000)

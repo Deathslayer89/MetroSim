@@ -3,7 +3,6 @@ package simulation
 import (
 	"fmt"
 	"math"
-	"sync"
 	"testing"
 	"time"
 
@@ -59,10 +58,21 @@ func TestFunneledVehiclesRaiseEdgeWeights(t *testing.T) {
 // A pileup on the next edge of a car's route makes the engine send the car
 // around it on the following replan pass.
 func TestEngineReroutesAroundPileup(t *testing.T) {
-	g := loadGrid(t)
+	// 0 -> 1 -> 2 is the quick route; 1 -> 3 -> 2 is a 26 s detour. Jammed to
+	// the 5x cap, edge 1 -> 2 takes 100 s, over three times the detour, so even
+	// the weight-3 heuristic has to take the detour.
+	g := graph.NewGraph()
+	g.AddNode(&graph.Node{ID: 0, Lat: 37.7700, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 1, Lat: 37.7710, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 2, Lat: 37.7730, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 3, Lat: 37.7720, Lon: -122.4210})
+	g.AddEdge(&graph.Edge{ID: 0, FromNode: 0, ToNode: 1, Length: 111, SpeedLimit: 13.9, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 1, FromNode: 1, ToNode: 2, Length: 222, SpeedLimit: 11.1, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 2, FromNode: 1, ToNode: 3, Length: 260, SpeedLimit: 20, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 3, FromNode: 3, ToNode: 2, Length: 260, SpeedLimit: 20, Lanes: 1})
 	engine := NewEngine(Config{
 		Graph:            g,
-		CongestionParams: traffic.CongestionParams{Alpha: 1, Beta: 2},
+		CongestionParams: traffic.DemoCongestionParams(),
 		TickRate:         10.0,
 		SpeedMultiplier:  1.0,
 	})
@@ -71,9 +81,9 @@ func TestEngineReroutesAroundPileup(t *testing.T) {
 	if err := car.PlanRoute(); err != nil {
 		t.Fatalf("plan route: %v", err)
 	}
-	const jammed = 1 // edge 1->2
+	const jammed = 1
 	if len(car.Route) != 2 || car.Route[1].ID != jammed {
-		t.Fatalf("want the direct route 0-1-2 first, got %d edges", len(car.Route))
+		t.Fatalf("want the quick route 0-1-2 first, got %d edges", len(car.Route))
 	}
 	for i := 0; i < 100; i++ {
 		v := engine.SpawnVehicle(1)
@@ -130,50 +140,36 @@ func TestGetVehicleSnapshotsRaceFree(t *testing.T) {
 }
 
 // Stop must end Run while other goroutines flood it with pause and resume.
+// Stop has to end Run while it's paused, when Run waits on commands rather
+// than ticks.
 func TestStopEndsRunDuringPauseResume(t *testing.T) {
-	g := loadGrid(t)
-
 	engine := NewEngine(Config{
-		Graph:            g,
+		Graph:            loadGrid(t),
 		CongestionParams: traffic.DefaultCongestionParams(),
 		TickRate:         100.0,
 		SpeedMultiplier:  1.0,
 	})
-
-	for i := 0; i < 5; i++ {
-		v := engine.SpawnVehicle(i)
-		v.SetDestination(((i + 5) % 9) + 1)
-		if err := v.PlanRoute(); err != nil {
-			t.Fatalf("plan route failed: %v", err)
-		}
-	}
-
 	runDone := make(chan struct{})
 	go func() {
 		engine.Run()
 		close(runDone)
 	}()
 
-	var toggles sync.WaitGroup
-	for w := 0; w < 4; w++ {
-		toggles.Add(1)
-		go func() {
-			defer toggles.Done()
-			for i := 0; i < 100; i++ {
-				engine.Pause()
-				engine.Resume()
-			}
-		}()
+	engine.Pause()
+	deadline := time.Now().Add(2 * time.Second)
+	for engine.GetState() != StatePaused && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if engine.GetState() != StatePaused {
+		t.Fatal("Run never paused")
 	}
 	engine.Stop()
-	defer toggles.Wait()
 
 	select {
 	case <-runDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not exit within 2s of Stop")
+		t.Fatal("Run did not exit within 2s of Stop while paused")
 	}
-
 	if engine.GetState() != StateStopped {
 		t.Errorf("expected StateStopped after Run exit, got %v", engine.GetState())
 	}

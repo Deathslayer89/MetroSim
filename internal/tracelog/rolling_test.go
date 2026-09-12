@@ -23,10 +23,15 @@ func TestRollingRecorderCrashMidBatchLosesUncommittedRecords(t *testing.T) {
 			t.Fatalf("record %d: %v", i, err)
 		}
 	}
-	// Crash: drop r1 without EndBatch or Close, so nothing reaches disk.
+	// Crash: drop r1 without EndBatch or Close, so nothing reaches disk, and
+	// leave the partial file that a crash in the middle of a write leaves.
 	files, _ := filepath.Glob(filepath.Join(dir, "*.parquet"))
 	if len(files) != 0 {
 		t.Fatalf("crash test: expected no files before EndBatch, found %d", len(files))
+	}
+	partial := filepath.Join(dir, "trips_2026-01-01T00_crashed_000001.parquet.tmp")
+	if err := os.WriteFile(partial, []byte("PAR1 cut off"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	// Restart, replay (same IDs), confirm a fresh batch is written.
@@ -48,6 +53,9 @@ func TestRollingRecorderCrashMidBatchLosesUncommittedRecords(t *testing.T) {
 
 	if got := rowsOnDisk(t, dir); got != 5 {
 		t.Errorf("after the redelivery: want 5 rows on disk, got %d", got)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(left) != 0 {
+		t.Errorf("unfinished files left behind: %v", left)
 	}
 }
 

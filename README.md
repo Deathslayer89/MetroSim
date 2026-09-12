@@ -43,7 +43,7 @@ Demand comes from scenario files: a piecewise-linear arrival rate, Poisson arriv
 
 Every step of a trip (request, match, cancellation, pickup, dropoff, abandonment), every driver position and every surge change is a proto3 event. Inside one process they go over a synchronous in-memory bus. With `--bus=kafka` they go to Kafka instead, where three services pick them up:
 
-- `trace-writer` turns each consumed batch into its own Parquet file and commits offsets only once the file is complete. If it dies mid-batch, Kafka redelivers and the trips already on disk are skipped. A write that fails is retried until it goes through; only records that can't be decoded go to a dead-letter topic.
+- `trace-writer` turns each consumed batch into its own Parquet file, written under a temporary name and renamed once it's synced to disk, and commits offsets only after that. If it dies mid-batch, Kafka redelivers and the trips already on disk are skipped. A write that fails is retried until it goes through; only records that can't be decoded go to a dead-letter topic.
 - `metrics-aggregator` serves Prometheus metrics. Run two and they split the partitions; Prometheus adds them up.
 - `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser. It reads every topic from the start each time it launches, so a restart doesn't lose count.
 

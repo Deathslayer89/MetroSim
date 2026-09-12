@@ -148,10 +148,15 @@ func (r *Recorder) Record(t TripInput) error {
 	return err
 }
 
+// Close writes the footer and syncs the file to disk before closing it.
 func (r *Recorder) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.w.Close(); err != nil {
+		r.f.Close()
+		return err
+	}
+	if err := r.f.Sync(); err != nil {
 		r.f.Close()
 		return err
 	}

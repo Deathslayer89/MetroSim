@@ -35,9 +35,10 @@ func keyOf(t TripInput) tripKey {
 }
 
 // RollingRecorder writes per-trip rows to Parquet, one file per Kafka fetch
-// batch. A file is complete before its batch's offsets commit, so a crash
-// mid-batch leaves at most an unreadable file, which startup skips; Kafka
-// redelivers the batch and dedup drops trips already on disk.
+// batch. Each file is written under a .tmp name, synced and renamed before its
+// batch's offsets commit, so a crash mid-batch leaves only a .tmp file, which
+// startup deletes; Kafka redelivers the batch and dedup drops trips already on
+// disk.
 type RollingRecorder struct {
 	dir         string
 	instanceTag string // unique per process; keeps restarts from clobbering each other's files
@@ -56,6 +57,18 @@ func NewRollingRecorder(dir string) (*RollingRecorder, error) {
 func NewRollingRecorderWithCap(dir string, capacity int) (*RollingRecorder, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
+	}
+	unfinished, err := filepath.Glob(filepath.Join(dir, "*.parquet.tmp"))
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range unfinished {
+		if err := os.Remove(p); err != nil {
+			return nil, err
+		}
+	}
+	if len(unfinished) > 0 {
+		log.Printf("rolling recorder: removed %d unfinished files from %s", len(unfinished), dir)
 	}
 	r := &RollingRecorder{
 		dir:         dir,
@@ -181,24 +194,34 @@ func (r *RollingRecorder) EndBatch() error {
 	seq := r.batchSeq.Add(1)
 	hour := time.Now().UTC().Format("2006-01-02T15")
 	path := filepath.Join(r.dir, fmt.Sprintf("trips_%s_%s_%06d.parquet", hour, r.instanceTag, seq))
+	tmp := path + ".tmp"
 
-	rec, err := Open(path, "", "", 0)
+	rec, err := Open(tmp, "", "", 0)
 	if err != nil {
 		r.resetBatchState() // partial file never created; drop the buffer so retry can rebuild
-		return fmt.Errorf("open %s: %w", path, err)
+		return fmt.Errorf("open %s: %w", tmp, err)
 	}
 	for _, t := range r.currentBuf {
 		if err := rec.Record(t); err != nil {
 			rec.Close()
-			os.Remove(path)
+			os.Remove(tmp)
 			r.resetBatchState()
 			return fmt.Errorf("write batch: %w", err)
 		}
 	}
 	if err := rec.Close(); err != nil {
-		os.Remove(path)
+		os.Remove(tmp)
 		r.resetBatchState()
-		return fmt.Errorf("close %s: %w", path, err)
+		return fmt.Errorf("close %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		r.resetBatchState()
+		return fmt.Errorf("rename %s: %w", tmp, err)
+	}
+	// Syncing the directory makes the rename itself survive a power cut.
+	if err := syncDir(r.dir); err != nil {
+		log.Printf("rolling recorder: sync %s: %v", r.dir, err)
 	}
 
 	// Mark trips seen only once the footer is written.
@@ -251,4 +274,13 @@ func (r *RollingRecorder) SubscribeToBus(bus events.Bus) error {
 			return nil
 		},
 	)
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

@@ -45,6 +45,9 @@ func main() {
 	maxWait := flag.Duration("max-wait", 0, "abandon a request unmatched this long (rider gives up); 0 disables")
 	repositionAfter := flag.Duration("reposition-after", 0, "send cars idle this long toward recent demand; 0 disables")
 	flag.Parse()
+	if !(*speed > 0) || math.IsInf(*speed, 1) {
+		log.Fatalf("--speed must be a positive number, got %g", *speed)
+	}
 
 	g := mustLoadGraph(*osmPath)
 	log.Printf("graph: %d nodes, %d edges", g.NodeCount(), g.EdgeCount())

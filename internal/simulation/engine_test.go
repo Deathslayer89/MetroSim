@@ -1,6 +1,7 @@
 package simulation
 
 import (
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -171,5 +172,36 @@ func TestStopEndsRunDuringPauseResume(t *testing.T) {
 
 	if engine.GetState() != StateStopped {
 		t.Errorf("expected StateStopped after Run exit, got %v", engine.GetState())
+	}
+}
+
+// A speed that isn't finite and positive would freeze or reverse the clock, so
+// the engine ignores it. Commands run in order, so once the pause that follows
+// them lands, the bad speeds have been dealt with.
+func TestSetSpeedIgnoresSpeedsThatStopOrReverseTime(t *testing.T) {
+	engine := NewEngine(Config{Graph: loadGrid(t), CongestionParams: traffic.DemoCongestionParams(), TickRate: 100})
+	done := make(chan struct{})
+	go func() {
+		engine.Run()
+		close(done)
+	}()
+	defer func() {
+		engine.Stop()
+		<-done
+	}()
+
+	for _, bad := range []float64{-5, 0, math.NaN(), math.Inf(1)} {
+		engine.SetSpeed(bad)
+	}
+	engine.Pause()
+	deadline := time.Now().Add(2 * time.Second)
+	for engine.GetState() != StatePaused && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if engine.GetState() != StatePaused {
+		t.Fatal("the engine never paused")
+	}
+	if got := engine.GetSpeed(); got != 1 {
+		t.Errorf("speed changed to %v", got)
 	}
 }

@@ -107,7 +107,7 @@ func NewEngineWithBus(cfg Config, bus events.Bus) *Engine {
 	if cfg.TickRate == 0 {
 		cfg.TickRate = 10.0
 	}
-	if cfg.SpeedMultiplier == 0 {
+	if !validSpeed(cfg.SpeedMultiplier) {
 		cfg.SpeedMultiplier = 1.0
 	}
 
@@ -401,9 +401,19 @@ func (e *Engine) Stop() {
 	e.stopOnce.Do(func() { close(e.stop) })
 }
 
-func (e *Engine) Pause()                      { e.sendCmd(command{kind: cmdPause}) }
-func (e *Engine) Resume()                     { e.sendCmd(command{kind: cmdResume}) }
-func (e *Engine) SetSpeed(multiplier float64) { e.sendCmd(command{kind: cmdSetSpeed, arg: multiplier}) }
+func (e *Engine) Pause()  { e.sendCmd(command{kind: cmdPause}) }
+func (e *Engine) Resume() { e.sendCmd(command{kind: cmdResume}) }
+
+// SetSpeed changes the sim-speed multiplier. A value that isn't finite and
+// positive is ignored: zero would freeze the clock and a negative one would run
+// it backwards.
+func (e *Engine) SetSpeed(multiplier float64) {
+	if validSpeed(multiplier) {
+		e.sendCmd(command{kind: cmdSetSpeed, arg: multiplier})
+	}
+}
+
+func validSpeed(x float64) bool { return x > 0 && !math.IsInf(x, 1) }
 
 func (e *Engine) GetState() SimulationState {
 	return SimulationState(e.state.Load())

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Deathslayer89/MetroSim/internal/dispatcher"
 	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
 	"github.com/Deathslayer89/MetroSim/internal/traffic"
@@ -228,5 +229,39 @@ func TestDriverUpdatesAreKeyedByDriver(t *testing.T) {
 	engine.Tick()
 	if seen != 2 || wrong != 0 {
 		t.Errorf("want 2 updates keyed by driver, got %d updates, %d with the wrong key", seen, wrong)
+	}
+}
+
+// Trip events go out after the tick releases the engine lock, so a subscriber
+// may call back into the engine. Published under the lock, this deadlocked.
+func TestTripSubscribersCanReadTheEngine(t *testing.T) {
+	engine := NewEngine(Config{Graph: loadGrid(t), CongestionParams: traffic.DemoCongestionParams()})
+	engine.SpawnVehicle(0)
+	matched := make(chan time.Time, 1)
+	err := events.SubscribeTripMatched(engine.Bus(), "test", func(*eventspb.TripMatched) {
+		select {
+		case matched <- engine.GetCurrentTime():
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.SubmitRequest(&dispatcher.Request{ID: 1, PickupNode: 3, DestinationNode: 8})
+
+	done := make(chan struct{})
+	go func() {
+		engine.Tick()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Tick deadlocked on a subscriber that reads the engine")
+	}
+	select {
+	case <-matched:
+	default:
+		t.Error("no TripMatched was published")
 	}
 }

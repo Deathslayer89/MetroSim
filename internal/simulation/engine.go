@@ -63,6 +63,7 @@ type Engine struct {
 	dispatcher       *dispatcher.Dispatcher
 	metricsCollector *metrics.MetricsCollector
 	bus              events.Bus
+	outbox           *outbox // the dispatcher's bus; flushed once e.mu is released
 	stamper          *events.Stamper
 	arrivals         ArrivalSource
 	surge            *surge.Tracker
@@ -118,7 +119,8 @@ func NewEngineWithBus(cfg Config, bus events.Bus) *Engine {
 	stamper := events.NewStamper(events.RunInfo{})
 	// The collector backs GetMetricsCollector; Prometheus subscribes from cmd.
 	metricsCollector.SubscribeToBus(bus)
-	dispatcher := dispatcher.NewDispatcher(cfg.Graph, pathPlanner, bus, stamper)
+	out := &outbox{Bus: bus}
+	dispatcher := dispatcher.NewDispatcher(cfg.Graph, pathPlanner, out, stamper)
 
 	e := &Engine{
 		graph:            cfg.Graph,
@@ -127,6 +129,7 @@ func NewEngineWithBus(cfg Config, bus events.Bus) *Engine {
 		dispatcher:       dispatcher,
 		metricsCollector: metricsCollector,
 		bus:              bus,
+		outbox:           out,
 		stamper:          stamper,
 		vehicles:         make(map[int]*agent.Vehicle),
 		nextVehicleID:    1,
@@ -159,6 +162,7 @@ func (e *Engine) SubmitRequest(req *dispatcher.Request) {
 	req.RequestTime = e.currentTime
 	e.mu.RUnlock()
 	e.dispatcher.SubmitRequest(req)
+	e.outbox.flush()
 }
 
 // SetArrivalSource installs a generator that the Engine polls each Tick for new
@@ -326,6 +330,7 @@ func (e *Engine) Tick() {
 
 	e.mu.Unlock()
 
+	e.outbox.flush()
 	// Keys keep each driver's and each cell's updates in order on one partition.
 	for _, d := range driverEvents {
 		meta := e.stamper.MetaFor(publishTime)

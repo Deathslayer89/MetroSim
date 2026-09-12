@@ -145,3 +145,51 @@ func TestKafkaBusGrouplessReadsFromTheStart(t *testing.T) {
 		bus.Close()
 	}
 }
+
+// Publish returns before the broker has the record, so Close has to flush:
+// records published just before it must still arrive.
+func TestKafkaBusCloseFlushesPublishedRecords(t *testing.T) {
+	seeds := seedsFromEnv()
+	if !brokerReachable(seeds) {
+		t.Skipf("no broker at %v; run make kafka-up or set METROSIM_KAFKA_SEEDS", seeds)
+	}
+	pub, err := New(seeds)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	marker := time.Now().UnixNano()
+	for i := int64(0); i < 5; i++ {
+		if err := events.PublishTripRequested(pub, &eventspb.TripRequested{RequestId: marker + i}); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+	pub.Close()
+
+	sub, err := New(seeds)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sub.Close()
+	seen := make(chan int64, 16)
+	err = events.SubscribeTripRequested(sub, "", func(m *eventspb.TripRequested) {
+		if m.RequestId >= marker && m.RequestId < marker+5 {
+			select {
+			case seen <- m.RequestId:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	got := make(map[int64]bool)
+	deadline := time.After(15 * time.Second)
+	for len(got) < 5 {
+		select {
+		case id := <-seen:
+			got[id] = true
+		case <-deadline:
+			t.Fatalf("read back %d of the 5 records published before Close", len(got))
+		}
+	}
+}

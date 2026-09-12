@@ -1,5 +1,6 @@
 // Package kafka implements events.Bus on Kafka with franz-go. The producer is
-// idempotent and keys each record by its Meta.PartitionKey.
+// idempotent and keys each record by its Meta.PartitionKey. Publish doesn't wait
+// for the broker; Close flushes what's still buffered.
 package kafka
 
 import (
@@ -33,7 +34,7 @@ var (
 
 	publishFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "metrosim_events_publish_failures_total",
-		Help: "Producer ProduceSync failures (event was not published).",
+		Help: "Records the producer gave up on; the event was not published.",
 	}, []string{"topic"})
 )
 
@@ -77,12 +78,17 @@ func New(seeds []string) (*Bus, error) {
 	return &Bus{seeds: seeds, producer: producer, ctx: ctx, cancel: cancel}, nil
 }
 
-// Close stops every consumer (waits for in-flight handlers to finish), then
-// closes the producer and consumer Kafka clients. Call before flushing any
-// downstream writer that subscribed to this bus.
+// Close stops every consumer (waits for in-flight handlers to finish), flushes
+// records the producer still holds, then closes the Kafka clients. Call before
+// flushing any downstream writer that subscribed to this bus.
 func (b *Bus) Close() {
 	b.cancel()
 	b.wg.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := b.producer.Flush(ctx); err != nil {
+		log.Printf("kafka: flush on close: %v", err)
+	}
+	cancel()
 	b.producer.Close()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -91,8 +97,11 @@ func (b *Bus) Close() {
 	}
 }
 
-// Publish produces msg to topic, keyed by its Meta.PartitionKey. A record with
-// no key is left to the partitioner.
+// Publish hands msg to the producer, keyed by its Meta.PartitionKey, and
+// returns without waiting for the broker, so records batch within the linger.
+// The client retries failed sends; a record it gives up on is logged and
+// counted. When its buffer is full, Publish blocks until there's room. A record
+// with no key is left to the partitioner.
 func (b *Bus) Publish(topic string, msg proto.Message) error {
 	data, err := proto.Marshal(msg)
 	if err != nil {
@@ -102,14 +111,12 @@ func (b *Bus) Publish(topic string, msg proto.Message) error {
 	if k := partitionKey(msg); k != "" {
 		rec.Key = []byte(k)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := b.producer.ProduceSync(ctx, rec).FirstErr(); err != nil {
-		publishFailures.WithLabelValues(topic).Inc()
-		log.Printf("kafka: produce %s failed: %v", topic, err)
-		return fmt.Errorf("produce %s: %w", topic, err)
-	}
+	b.producer.Produce(context.Background(), rec, func(r *kgo.Record, err error) {
+		if err != nil {
+			publishFailures.WithLabelValues(r.Topic).Inc()
+			log.Printf("kafka: produce %s failed: %v", r.Topic, err)
+		}
+	})
 	return nil
 }
 

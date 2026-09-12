@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 )
 
 // FeatureNames is the feature vector layout; Features() emits the same order.
@@ -63,6 +64,11 @@ func Load(path string) (*Model, error) {
 	var m Model
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, err
+	}
+	// Features() emits FeatureNames, so a model fit on another layout would
+	// index past its weights on the first prediction.
+	if !slices.Equal(m.Names, FeatureNames) {
+		return nil, fmt.Errorf("model features %v, want %v", m.Names, FeatureNames)
 	}
 	if len(m.Weights) != len(m.Names)+1 {
 		return nil, fmt.Errorf("model corrupt: %d weights for %d features", len(m.Weights), len(m.Names))

@@ -524,3 +524,18 @@ func (d *Dispatcher) RidesInProgress() []*Ride {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
+
+// Waiting returns the requests whose rider hasn't been picked up, queued or
+// with a driver on the way, in request-ID order.
+func (d *Dispatcher) Waiting() []*Request {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := append([]*Request(nil), d.pendingQueue...)
+	for _, r := range d.activeRides {
+		if r.State == RideStateAssigned {
+			out = append(out, r.Request)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}

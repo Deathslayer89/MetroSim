@@ -32,7 +32,8 @@ import (
 
 type runResult struct {
 	seed      int64
-	waits     []float64 // one per rider picked up
+	waits     []float64 // one per rider; the first pickedUp are riders who were picked up
+	pickedUp  int
 	requested int
 	completed int
 	moves     int // repositioning moves
@@ -127,7 +128,7 @@ func main() {
 				}
 				j.s.runs[j.rep] = res
 				log.Printf("[%s seed %d] requested=%d picked_up=%d completed=%d mean_wait=%.1fs",
-					j.s.name, seed, res.requested, len(res.waits), res.completed, stats.Mean(res.waits))
+					j.s.name, seed, res.requested, res.pickedUp, res.completed, stats.Mean(res.waits))
 			}
 		}()
 	}
@@ -192,8 +193,9 @@ func gitCommit() string {
 
 // runHeadless runs one policy on one seed. After the scenario ends it keeps
 // ticking for up to half its duration so trips in progress can finish. A rider
-// still aboard then counts with the wait they had; a rider never picked up has
-// no wait.
+// still aboard then counts with the wait they had. A rider still waiting counts
+// with the time they had waited so far, which understates their wait but keeps
+// a policy that strands riders from looking faster than one that serves them.
 func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWindow, repositionAfter time.Duration, seed int64, traceDir string, behavior dispatcher.DriverBehavior, etaModel *eta.Model) (runResult, error) {
 	const tickRate = 10.0
 	const tickDt = time.Second / tickRate
@@ -265,6 +267,8 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 
 	completed := d.GetCompletedRides()
 	aboard := d.RidesInProgress()
+	waiting := d.Waiting()
+	end := engine.GetCurrentTime()
 	if reposition {
 		log.Printf("  [%s seed=%d] %d repositioning moves", polName, seed, d.RepositionCount())
 	}
@@ -272,11 +276,15 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 		bs := d.BehaviorStats()
 		log.Printf("  [%s seed=%d] driver friction: %d declines, %d cancellations", polName, seed, bs.Declines, bs.Cancellations)
 	}
-	waits := make([]float64, 0, len(completed)+len(aboard))
+	waits := make([]float64, 0, len(completed)+len(aboard)+len(waiting))
 	for _, r := range append(completed, aboard...) {
 		waits = append(waits, r.PickupTime.Sub(r.Request.RequestTime).Seconds())
 	}
-	return runResult{seed: seed, waits: waits, requested: gen.RequestCount(), completed: len(completed), moves: d.RepositionCount()}, nil
+	pickedUp := len(waits)
+	for _, req := range waiting {
+		waits = append(waits, end.Sub(req.RequestTime).Seconds())
+	}
+	return runResult{seed: seed, waits: waits, pickedUp: pickedUp, requested: gen.RequestCount(), completed: len(completed), moves: d.RepositionCount()}, nil
 }
 
 func writeWaitsCSV(path string, pols []*policySummary) error {
@@ -286,13 +294,13 @@ func writeWaitsCSV(path string, pols []*policySummary) error {
 	}
 	defer f.Close()
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"policy", "seed", "wait_seconds"}); err != nil {
+	if err := w.Write([]string{"policy", "seed", "wait_seconds", "picked_up"}); err != nil {
 		return err
 	}
 	for _, s := range pols {
 		for _, r := range s.runs {
-			for _, x := range r.waits {
-				row := []string{s.name, strconv.FormatInt(r.seed, 10), strconv.FormatFloat(x, 'f', 4, 64)}
+			for k, x := range r.waits {
+				row := []string{s.name, strconv.FormatInt(r.seed, 10), strconv.FormatFloat(x, 'f', 4, 64), strconv.FormatBool(k < r.pickedUp)}
 				if err := w.Write(row); err != nil {
 					return err
 				}
@@ -328,16 +336,16 @@ func writeReport(path string, sc *scenario.Scenario, prov provenance, pols []*po
 	fmt.Fprintln(f, "| policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |")
 	fmt.Fprintln(f, "|---|---:|---:|---:|---:|---:|---:|")
 	for _, s := range pols {
-		var req, done int
+		var req, up, done int
 		for _, r := range s.runs {
 			req += r.requested
+			up += r.pickedUp
 			done += r.completed
 		}
-		n := len(s.allWaits)
-		fmt.Fprintf(f, "| %s | %d | %d (%.1f%%) | %d | %.1f | %.1f | %.1f |\n", s.name, req, n, percent(n, req), done,
+		fmt.Fprintf(f, "| %s | %d | %d (%.1f%%) | %d | %.1f | %.1f | %.1f |\n", s.name, req, up, percent(up, req), done,
 			stats.Mean(s.allWaits), stats.Percentile(s.allWaits, 0.5), stats.Percentile(s.allWaits, 0.95))
 	}
-	fmt.Fprintln(f, "\nWaits cover every rider who was picked up, including riders still aboard when the run stopped.")
+	fmt.Fprintln(f, "\nWaits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.")
 	for _, s := range pols {
 		var moves int
 		for _, r := range s.runs {
@@ -357,7 +365,7 @@ func writeReport(path string, sc *scenario.Scenario, prov provenance, pols []*po
 }
 
 // writePaired compares alt with base seed by seed. A seed where either policy
-// picked up no riders has no mean wait, so it is left out.
+// had no riders has no mean wait, so it is left out.
 func writePaired(f *os.File, base, alt *policySummary) {
 	fmt.Fprintf(f, "\n## %s vs %s: mean wait per seed (s)\n\n| seed | %s | %s | difference |\n|---:|---:|---:|---:|\n",
 		alt.name, base.name, base.name, alt.name)
@@ -367,7 +375,7 @@ func writePaired(f *os.File, base, alt *policySummary) {
 		a, b := base.runs[i].waits, alt.runs[i].waits
 		if len(a) == 0 || len(b) == 0 {
 			skipped++
-			fmt.Fprintf(f, "| %d | | | no pickups |\n", base.runs[i].seed)
+			fmt.Fprintf(f, "| %d | | | no riders |\n", base.runs[i].seed)
 			continue
 		}
 		d := stats.Mean(b) - stats.Mean(a)
@@ -380,7 +388,7 @@ func writePaired(f *os.File, base, alt *policySummary) {
 		fmt.Fprintf(f, "| %d | %.1f | %.1f | %+.1f |\n", base.runs[i].seed, stats.Mean(a), stats.Mean(b), d)
 	}
 	if len(diffs) == 0 {
-		fmt.Fprintln(f, "\nNo seed had pickups under both policies.")
+		fmt.Fprintln(f, "\nNo seed had riders under both policies.")
 		return
 	}
 	lo, hi := stats.BootstrapMeanCI(diffs, 10000, rand.New(rand.NewSource(1)))
@@ -389,7 +397,7 @@ func writePaired(f *os.File, base, alt *policySummary) {
 	fmt.Fprintf(f, "%s had the lower mean wait in %d of %d seeds; two-sided sign test p = %.3g.\n",
 		alt.name, wins, len(diffs)-ties, stats.SignTest(wins, len(diffs)-ties))
 	if skipped > 0 {
-		fmt.Fprintf(f, "\n%d seeds left out because a policy picked up no riders.\n", skipped)
+		fmt.Fprintf(f, "\n%d seeds left out because a policy had no riders.\n", skipped)
 	}
 }
 

@@ -11,9 +11,9 @@ import (
 	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
-// Stamper turns a fresh proto.Message into one carrying a stable event_id and
-// the current run metadata. Engine holds the only Stamper instance so all
-// outgoing events share the same monotonic ID space.
+// Stamper turns a fresh proto.Message into one carrying the next event_id and
+// the current run metadata. Engine holds the only Stamper instance, so IDs
+// count up across all its events and start again at 1 with every run.
 type Stamper struct {
 	mu      sync.RWMutex
 	info    RunInfo

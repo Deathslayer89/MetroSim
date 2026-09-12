@@ -31,7 +31,7 @@ const (
 // or partition without parsing the payload-specific fields.
 type Meta struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventId       uint64                 `protobuf:"varint,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`               // monotonic per-publisher; stable across retries
+	EventId       uint64                 `protobuf:"varint,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`               // counts up from 1 in each run, so unique only within a run
 	Time          *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=time,proto3" json:"time,omitempty"`                                     // sim time at publish
 	Scenario      string                 `protobuf:"bytes,3,opt,name=scenario,proto3" json:"scenario,omitempty"`                             // scenario name (e.g. "morning_rush")
 	Policy        string                 `protobuf:"bytes,4,opt,name=policy,proto3" json:"policy,omitempty"`                                 // greedy, batch or region-sharded, plus "+reposition" if on

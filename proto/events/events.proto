@@ -14,7 +14,7 @@ import "google/protobuf/timestamp.proto";
 // Meta is stamped on every event so a downstream consumer can filter, join,
 // or partition without parsing the payload-specific fields.
 message Meta {
-  uint64 event_id = 1;                          // monotonic per-publisher; stable across retries
+  uint64 event_id = 1;                          // counts up from 1 in each run, so unique only within a run
   google.protobuf.Timestamp time = 2;           // sim time at publish
   string scenario = 3;                          // scenario name (e.g. "morning_rush")
   string policy = 4;                            // greedy, batch or region-sharded, plus "+reposition" if on

@@ -1,5 +1,5 @@
 // Package kafka implements events.Bus on Kafka with franz-go. The producer is
-// idempotent and keys each record by its Meta.PartitionKey. Publish doesn't wait
+// idempotent and keys each record by its Meta.PartitionKey. Publish never waits
 // for the broker; Close flushes what's still buffered.
 package kafka
 
@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -34,17 +35,23 @@ var (
 
 	publishFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "metrosim_events_publish_failures_total",
-		Help: "Records the producer gave up on; the event was not published.",
+		Help: "Events never published: dropped while the producer was full, or given up on.",
 	}, []string{"topic"})
 )
 
 // A batch whose onBatchEnd fails is retried, backing off exponentially up to the
 // cap, until it succeeds: a sink that can't write stalls its partitions rather
-// than dropping trips. Vars so tests can shorten them.
+// than dropping trips. Close gives the producer flushTimeout to empty and the
+// clients as long again to close. Vars so tests can shorten them.
 var (
 	endBatchBaseBackoff = 100 * time.Millisecond
 	endBatchMaxBackoff  = 5 * time.Second
+	flushTimeout        = 10 * time.Second
 )
+
+// maxBuffered is how many records the producer holds for the broker before
+// Publish starts dropping events: about a minute of events from 180 cars.
+const maxBuffered = 100_000
 
 func dlqTopic(topic string) string { return "metrosim.dlq." + topic }
 
@@ -53,6 +60,7 @@ func dlqTopic(topic string) string { return "metrosim.dlq." + topic }
 type Bus struct {
 	seeds    []string
 	producer *kgo.Client
+	failing  atomic.Int64 // records dropped or failed since one was last delivered
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -69,6 +77,7 @@ func New(seeds []string) (*Bus, error) {
 		kgo.SeedBrokers(seeds...),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.ProducerLinger(50*time.Millisecond),
+		kgo.MaxBufferedRecords(maxBuffered),
 		kgo.AllowAutoTopicCreation(),
 	)
 	if err != nil {
@@ -79,29 +88,64 @@ func New(seeds []string) (*Bus, error) {
 }
 
 // Close stops every consumer (waits for in-flight handlers to finish), flushes
-// records the producer still holds, then closes the Kafka clients. Call before
-// flushing any downstream writer that subscribed to this bus.
+// records the producer still holds, then closes the Kafka clients. It waits
+// flushTimeout for the flush and as long again for the clients, then returns:
+// with the broker unreachable, a client leaving its group can otherwise wait
+// out every retry. Call before flushing any downstream writer that subscribed
+// to this bus.
 func (b *Bus) Close() {
 	b.cancel()
 	b.wg.Wait()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), flushTimeout)
+	defer cancel()
 	if err := b.producer.Flush(ctx); err != nil {
-		log.Printf("kafka: flush on close: %v", err)
+		log.Printf("kafka: flush on close: %v; %d buffered events were not sent", err, b.producer.BufferedProduceRecords())
 	}
-	cancel()
-	b.producer.Close()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	clients := []closer{b.producer}
 	for _, c := range b.consumers {
-		c.Close()
+		clients = append(clients, c)
+	}
+	b.mu.Unlock()
+	if !closeAll(clients, flushTimeout) {
+		log.Printf("kafka: clients still closing after %s; not waiting for them", flushTimeout)
+	}
+}
+
+type closer interface{ Close() }
+
+// closeAll closes every client at once and reports whether they all finished
+// within d. A consumer leaving its group while the broker is unreachable can
+// take as long as its retries last.
+func closeAll(clients []closer, d time.Duration) bool {
+	var wg sync.WaitGroup
+	for _, c := range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Close()
+		}()
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
 	}
 }
 
 // Publish hands msg to the producer, keyed by its Meta.PartitionKey, and
 // returns without waiting for the broker, so records batch within the linger.
-// The client retries failed sends; a record it gives up on is logged and
-// counted. When its buffer is full, Publish blocks until there's room. A record
-// with no key is left to the partitioner.
+// It never blocks: with maxBuffered records already waiting, as there will be a
+// minute into a broker outage, the event is dropped, and the simulation keeps
+// its pace instead of stalling on Kafka. The client retries failed sends. A
+// record with no key is left to the partitioner.
 func (b *Bus) Publish(topic string, msg proto.Message) error {
 	data, err := proto.Marshal(msg)
 	if err != nil {
@@ -111,13 +155,27 @@ func (b *Bus) Publish(topic string, msg proto.Message) error {
 	if k := partitionKey(msg); k != "" {
 		rec.Key = []byte(k)
 	}
-	b.producer.Produce(context.Background(), rec, func(r *kgo.Record, err error) {
-		if err != nil {
-			publishFailures.WithLabelValues(r.Topic).Inc()
-			log.Printf("kafka: produce %s failed: %v", r.Topic, err)
-		}
-	})
+	b.producer.TryProduce(context.Background(), rec, b.delivered)
 	return nil
+}
+
+// delivered runs once per record, when the broker has it or the producer gives
+// up on it. Every failure is counted, but only the first of a run is logged,
+// along with the delivery that ends it, so an outage logs two lines rather
+// than one per event.
+func (b *Bus) delivered(r *kgo.Record, err error) {
+	if err == nil {
+		if b.failing.Load() > 0 {
+			if n := b.failing.Swap(0); n > 0 {
+				log.Printf("kafka: delivering again after %d events were not published", n)
+			}
+		}
+		return
+	}
+	publishFailures.WithLabelValues(r.Topic).Inc()
+	if b.failing.Add(1) == 1 {
+		log.Printf("kafka: produce %s failed, counting failures until a record gets through: %v", r.Topic, err)
+	}
 }
 
 // Subscribe runs handler on every record and commits once per fetch, so after a
@@ -205,7 +263,9 @@ func (b *Bus) consume(client *kgo.Client, topic string, commit bool, factory fun
 				return
 			}
 		}
-		if err := client.CommitUncommittedOffsets(context.Background()); err != nil {
+		// Closing abandons a commit still waiting on the broker; the batch comes
+		// again after a restart.
+		if err := client.CommitUncommittedOffsets(b.ctx); err != nil {
 			log.Printf("kafka: commit %s: %v", topic, err)
 		}
 	}

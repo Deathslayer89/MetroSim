@@ -71,8 +71,8 @@ func TestCarMatchedOnItsPickupIsNotRepositioned(t *testing.T) {
 	}
 }
 
-// Keying by request keeps one trip's events in order on one partition and
-// spreads trips evenly: two trips from the same corner get different keys.
+// Keying by request keeps one trip's events of each type in order and spreads
+// trips evenly: two trips from the same corner get different keys.
 func TestTripEventsAreKeyedByRequest(t *testing.T) {
 	g := loadGrid(t)
 	planner := pathfinding.NewPathPlanner(g, nil)

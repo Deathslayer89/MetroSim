@@ -19,8 +19,9 @@ import (
 	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
-// tripKey keys all of a request's events by its ID, so one trip's events stay
-// in order on one partition while trips spread evenly across partitions.
+// tripKey keys a request's events by its ID. Each event type has its own topic,
+// so this keeps one trip's events in order within a topic, not across topics:
+// a consumer can see a trip's match before its request.
 func tripKey(requestID int) string {
 	return fmt.Sprintf("trip:%d", requestID)
 }

@@ -47,6 +47,8 @@ Every step of a trip (request, match, cancellation, pickup, dropoff, abandonment
 - `metrics-aggregator` serves Prometheus metrics. Run two and they split the partitions; Prometheus adds them up.
 - `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser. It reads every topic from the start each time it launches, so a restart doesn't lose count.
 
+Publishing never waits for Kafka. If the broker is unreachable long enough to fill the producer's buffer, about a minute of events from 180 cars, metrosim drops further events and counts them in `metrosim_events_publish_failures_total` instead of stalling the simulation.
+
 Smaller pieces: surge per H3 resolution-8 cell (open requests over idle drivers, clamped to 1x to 3x, smoothed over 60 s), optional driver declines and cancellations, riders who give up after `--max-wait`, a Grafana dashboard, and a ridge-regression ETA model. The ETA model is a baseline. Trained on 2,000 routed pairs it predicts free-flow trip time with an in-sample R² of 0.89, nearly all of it from distance. Surge and the ETA model can both feed into batch matching (`--surge-premium`, `--eta-weight`); both are off by default and off in the headline.
 
 ## Running it
@@ -123,6 +125,7 @@ experiments/reposition/ batch with and without repositioning
 - Region sharding runs in one process. Splitting it across processes needs a way to hand off drivers near region boundaries, and that isn't written.
 - `live-view` rebuilds its whole snapshot ten times a second and sends it to every client, which won't hold up for a fleet in the tens of thousands. Replaying every topic from the start on launch also gets slower as the log grows.
 - Trace dedup remembers the last 100,000 trips. A trip redelivered after it has aged out gets written twice.
+- Events published while Kafka has been unreachable for over a minute are dropped, and their trips are missing from the traces and metrics. Losing none would take a durable outbox in front of the producer.
 
 ## License
 

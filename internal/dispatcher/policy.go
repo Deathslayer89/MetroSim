@@ -84,8 +84,9 @@ func edgeTime(ctx MatchCtx, e *graph.Edge) float64 {
 	return e.BaseWeight
 }
 
-// GreedyPolicy takes requests in arrival order and gives each the nearest idle
-// driver that can reach it.
+// GreedyPolicy takes requests in arrival order and gives each whichever of its
+// nearest free drivers can reach it soonest by road. That's the cost batch
+// minimizes too, so the two policies differ only in batching.
 type GreedyPolicy struct{}
 
 func (GreedyPolicy) Name() string { return "greedy" }
@@ -94,8 +95,8 @@ func (GreedyPolicy) Match(ctx MatchCtx) []Assignment {
 	if len(ctx.Pending) == 0 {
 		return nil
 	}
-	// Consider the nearest few, not just the single closest, so an unreachable
-	// nearest driver doesn't strand a request that other drivers could serve.
+	// The nearest few by straight line, the same pool batch draws from, so a
+	// driver who is close but far by road loses to one who gets there first.
 	const greedyCandidates = 5
 	out := make([]Assignment, 0, len(ctx.Pending))
 	for _, req := range ctx.Pending {
@@ -103,19 +104,21 @@ func (GreedyPolicy) Match(ctx MatchCtx) []Assignment {
 		if err != nil {
 			continue
 		}
+		best, bestCost := -1, math.Inf(1)
 		for _, c := range ctx.DriverIndex.NearestK(pickup.Lat, pickup.Lon, greedyCandidates) {
 			driver, ok := ctx.Vehicles[c.ID]
 			if !ok || !driver.IsAvailable() {
 				continue
 			}
-			cost := computeETA(ctx, driver, req)
-			if math.IsInf(cost, 1) {
-				continue // unreachable; try the next-nearest
+			if cost := computeETA(ctx, driver, req); cost < bestCost {
+				best, bestCost = driver.ID, cost
 			}
-			out = append(out, Assignment{Request: req, DriverID: driver.ID, Cost: cost})
-			ctx.DriverIndex.Remove(driver.ID)
-			break
 		}
+		if best < 0 {
+			continue // no candidate can reach it
+		}
+		out = append(out, Assignment{Request: req, DriverID: best, Cost: bestCost})
+		ctx.DriverIndex.Remove(best)
 	}
 	return out
 }

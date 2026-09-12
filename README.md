@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/Deathslayer89/MetroSim/actions/workflows/ci.yml/badge.svg)](https://github.com/Deathslayer89/MetroSim/actions/workflows/ci.yml)
 
-A ride-hailing dispatch simulator running on San Francisco's road network. I wanted to know whether holding requests for a few seconds and solving the assignment for the whole batch beats handing each request to the nearest free driver, on a real street grid rather than a toy one. MetroSim runs both policies against identical, seeded demand and compares how long riders wait for pickup.
+A ride-hailing dispatch simulator running on San Francisco's road network. I wanted to know whether holding requests for a few seconds and solving the assignment for the whole batch beats handing each request, as it arrives, to the nearby driver who can reach it soonest, on a real street grid rather than a toy one. MetroSim runs both policies against identical, seeded demand and compares how long riders wait for pickup.
 
 On the downtown scenario, batch matching cuts the mean wait from 149.5 s to 133.5 s:
 
@@ -37,7 +37,7 @@ Routing is A* on travel time with a weighted heuristic: straight-line distance o
 
 Each edge's travel time follows a BPR curve on the number of cars on it. Cars move against those times and replan, at most once a simulated second, when an edge still ahead of them changes by more than 10%.
 
-Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one the nearest driver that can reach it. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, which I wrote and test against brute force. A region-sharded variant solves each H3 resolution-5 region on its own. With `--reposition-after`, a car idle that long drives to the H3 resolution-8 cell within three rings, about 2.5 km, where the last 15 minutes of pickups most outnumber free cars, as long as that cell is at least two cars shorter than its own. It can still be matched on the way. The experiment runner treats this as a policy variant, as in `--policies batch,batch+reposition`.
+Idle drivers live in an H3 index at resolution 9. Greedy takes requests in arrival order and gives each one whichever of its five nearest free drivers can reach it soonest by road. Batch waits out a 3-second window, routes every pending request to its five nearest idle drivers, and solves the assignment with the Hungarian algorithm, which I wrote and test against brute force. Both policies score drivers by the same routed pickup time, so the headline measures the batching alone. A region-sharded variant solves each H3 resolution-5 region on its own. With `--reposition-after`, a car idle that long drives to the H3 resolution-8 cell within three rings, about 2.5 km, where the last 15 minutes of pickups most outnumber free cars, as long as that cell is at least two cars shorter than its own. It can still be matched on the way. The experiment runner treats this as a policy variant, as in `--policies batch,batch+reposition`.
 
 Demand comes from scenario files: a piecewise-linear arrival rate, Poisson arrivals, and hotspots that each take a stated share of pickups or dropoffs. The seed fixes everything, so two runs with the same seed produce identical trips, and a test checks exactly that.
 

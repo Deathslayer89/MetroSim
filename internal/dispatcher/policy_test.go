@@ -11,7 +11,7 @@ import (
 
 // buildAsymmetricMatchGraph has two drivers and two pickups. Routed ETAs: A to
 // pickup 1 is 5, A to 2 is 1, B to 1 is 6, B to 2 is 10. Greedy gives request 1
-// its nearest driver, A, and pays 5 + 10 = 15; batch pays 1 + 6 = 7.
+// its fastest driver, A, and pays 5 + 10 = 15; batch pays 1 + 6 = 7.
 func buildAsymmetricMatchGraph() *graph.Graph {
 	g := graph.NewGraph()
 	g.AddNode(&graph.Node{ID: 0, Lat: 37.770, Lon: -122.420}) // driver A
@@ -201,5 +201,36 @@ func TestSurgePremiumKeepsTheNearestDriver(t *testing.T) {
 	out := matchBatch(ctx, ctx.Pending, 5, 300, 0)
 	if len(out) != 1 || out[0].DriverID != 2 {
 		t.Errorf("with a 300 s surge premium the request should still get the driver 10 s away, got %+v", out)
+	}
+}
+
+// Greedy takes whichever nearby driver can reach the rider soonest by road, not
+// the one closest in a straight line.
+func TestGreedyPicksTheFastestNearbyDriver(t *testing.T) {
+	g := graph.NewGraph()
+	g.AddNode(&graph.Node{ID: 0, Lat: 37.7700, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 1, Lat: 37.7701, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 2, Lat: 37.7710, Lon: -122.4200})
+	g.AddEdge(&graph.Edge{ID: 0, FromNode: 1, ToNode: 0, Length: 1000, SpeedLimit: 10, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 1, FromNode: 2, ToNode: 0, Length: 111, SpeedLimit: 10, Lanes: 1})
+	planner := pathfinding.NewPathPlanner(g, graph.EuclideanDistance)
+	vehicles := map[int]*agent.Vehicle{
+		1: agent.NewVehicle(1, 1, g, planner),
+		2: agent.NewVehicle(2, 2, g, planner),
+	}
+	idx := NewH3DriverIndex()
+	for _, v := range vehicles {
+		lat, lon, _ := v.GetPosition()
+		idx.Insert(v.ID, lat, lon)
+	}
+	out := GreedyPolicy{}.Match(MatchCtx{
+		Pending:     []*Request{{ID: 1, PickupNode: 0}},
+		DriverIndex: idx,
+		Vehicles:    vehicles,
+		Graph:       g,
+		PathPlanner: planner,
+	})
+	if len(out) != 1 || out[0].DriverID != 2 {
+		t.Errorf("want driver 2, 11 s away by road, over driver 1, next door but 100 s away; got %+v", out)
 	}
 }

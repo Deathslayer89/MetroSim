@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/Deathslayer89/MetroSim/internal/dispatcher"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
 	"github.com/Deathslayer89/MetroSim/internal/scenario"
@@ -65,5 +67,34 @@ func TestCountersMatchDispatcher(t *testing.T) {
 	if c.Abandoned != d.AbandonedCount() || c.Cancelled != d.BehaviorStats().Cancellations {
 		t.Errorf("live view counted %d abandoned, %d cancelled; dispatcher %d, %d",
 			c.Abandoned, c.Cancelled, d.AbandonedCount(), d.BehaviorStats().Cancellations)
+	}
+}
+
+type groupRecorder struct{ groups []string }
+
+func (g *groupRecorder) Publish(string, proto.Message) error { return nil }
+func (g *groupRecorder) Subscribe(_, group string, _ func(proto.Message)) error {
+	g.groups = append(g.groups, group)
+	return nil
+}
+func (g *groupRecorder) SubscribeBatched(_, group string, _ func(proto.Message), _ func() error) error {
+	g.groups = append(g.groups, group)
+	return nil
+}
+
+// live-view keeps its counts in memory, so each launch has to read every topic
+// from the start rather than resume from a committed group offset.
+func TestLiveViewSubscribesWithoutAGroup(t *testing.T) {
+	var rec groupRecorder
+	if err := NewState().SubscribeToBus(&rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.groups) == 0 {
+		t.Fatal("no subscriptions")
+	}
+	for _, g := range rec.groups {
+		if g != "" {
+			t.Errorf("subscribed with group %q; a restart would resume mid-stream with empty counts", g)
+		}
 	}
 }

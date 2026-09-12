@@ -12,9 +12,9 @@ import (
 )
 
 func shortBackoff(t *testing.T) {
-	base, cap := endBatchBaseBackoff, endBatchMaxBackoff
+	base, ceiling := endBatchBaseBackoff, endBatchMaxBackoff
 	endBatchBaseBackoff, endBatchMaxBackoff = time.Millisecond, 4*time.Millisecond
-	t.Cleanup(func() { endBatchBaseBackoff, endBatchMaxBackoff = base, cap })
+	t.Cleanup(func() { endBatchBaseBackoff, endBatchMaxBackoff = base, ceiling })
 }
 
 // A sink that fails for a while must get the batch once it recovers. Giving up

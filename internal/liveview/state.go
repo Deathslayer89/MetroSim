@@ -64,10 +64,12 @@ func NewState() *State {
 	}
 }
 
-// SubscribeToBus wires this State to the bus under the "live-view" consumer
-// group: driver locations, surge updates, and every trip lifecycle topic.
+// SubscribeToBus wires this State to the bus: driver locations, surge updates,
+// and every trip lifecycle topic. It joins no consumer group, so every start
+// reads each topic from the beginning. The counts then cover the whole run after
+// a restart, and each live-view replica sees the whole fleet.
 func (s *State) SubscribeToBus(bus events.Bus) error {
-	const group = "live-view"
+	const group = ""
 	c := &s.counters
 	inc := func(n *int) {
 		s.mu.Lock()

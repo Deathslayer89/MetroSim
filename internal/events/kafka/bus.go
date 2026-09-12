@@ -121,19 +121,23 @@ func (b *Bus) Subscribe(topic, group string, handler func(proto.Message)) error 
 
 // SubscribeBatched calls onBatchEnd after each fetch has gone through onRecord
 // and commits the fetch only once onBatchEnd succeeds, so a crash mid-batch
-// means redelivery rather than loss. A failing onBatchEnd is retried.
+// means redelivery rather than loss. A failing onBatchEnd is retried. An empty
+// group joins none: it reads every partition from the start and commits nothing.
 func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message), onBatchEnd func() error) error {
 	factory, ok := decoderFor(topic)
 	if !ok {
 		return fmt.Errorf("no proto decoder registered for topic %q", topic)
 	}
 
-	consumer, err := kgo.NewClient(
+	opts := []kgo.Opt{
 		kgo.SeedBrokers(b.seeds...),
-		kgo.ConsumerGroup(group),
 		kgo.ConsumeTopics(topic),
-		kgo.DisableAutoCommit(),
-	)
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+	}
+	if group != "" {
+		opts = append(opts, kgo.ConsumerGroup(group), kgo.DisableAutoCommit())
+	}
+	consumer, err := kgo.NewClient(opts...)
 	if err != nil {
 		return fmt.Errorf("kafka consumer for %s/%s: %w", topic, group, err)
 	}
@@ -145,12 +149,12 @@ func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message)
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
-		b.consume(consumer, topic, factory, onRecord, onBatchEnd)
+		b.consume(consumer, topic, group != "", factory, onRecord, onBatchEnd)
 	}()
 	return nil
 }
 
-func (b *Bus) consume(client *kgo.Client, topic string, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) {
+func (b *Bus) consume(client *kgo.Client, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) {
 	for {
 		fetches := client.PollFetches(b.ctx)
 		if b.ctx.Err() != nil {
@@ -183,6 +187,9 @@ func (b *Bus) consume(client *kgo.Client, topic string, factory func() proto.Mes
 
 		if len(msgs) > 0 && !b.deliverBatch(topic, msgs, onRecord, onBatchEnd) {
 			return // closing mid-retry: leave the batch uncommitted
+		}
+		if !commit {
+			continue // no group: nothing to move past, and a restart reads from the start
 		}
 		// A record that doesn't decode never will, so it goes to the DLQ. Keep at
 		// it until the DLQ takes them, since the commit below moves past them.

@@ -93,3 +93,55 @@ func TestKafkaBusRoundTrip(t *testing.T) {
 		t.Fatal("timed out waiting for round-trip delivery")
 	}
 }
+
+// A subscriber with no group reads each topic from the start and commits
+// nothing, so one started later sees the same records again. live-view relies
+// on this to rebuild its counts after a restart.
+func TestKafkaBusGrouplessReadsFromTheStart(t *testing.T) {
+	seeds := seedsFromEnv()
+	if !brokerReachable(seeds) {
+		t.Skipf("no broker at %v; run make kafka-up or set METROSIM_KAFKA_SEEDS", seeds)
+	}
+	pub, err := New(seeds)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pub.Close()
+	marker := time.Now().UnixNano()
+	for i := int64(0); i < 3; i++ {
+		if err := events.PublishTripRequested(pub, &eventspb.TripRequested{RequestId: marker + i}); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+
+	for start := 1; start <= 2; start++ {
+		bus, err := New(seeds)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		seen := make(chan int64, 16)
+		err = events.SubscribeTripRequested(bus, "", func(m *eventspb.TripRequested) {
+			if m.RequestId >= marker && m.RequestId < marker+3 {
+				select {
+				case seen <- m.RequestId:
+				default:
+				}
+			}
+		})
+		if err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		got := make(map[int64]bool)
+		deadline := time.After(15 * time.Second)
+		for len(got) < 3 {
+			select {
+			case id := <-seen:
+				got[id] = true
+			case <-deadline:
+				bus.Close()
+				t.Fatalf("start %d read %d of 3 records from the start", start, len(got))
+			}
+		}
+		bus.Close()
+	}
+}

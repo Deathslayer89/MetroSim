@@ -21,7 +21,9 @@ const (
 )
 
 // Bus is the pub/sub contract. group is the Kafka consumer group; MemoryBus
-// ignores it and delivers to every subscriber.
+// ignores it and delivers to every subscriber. An empty group joins none: the
+// subscriber reads every partition from the start and commits nothing, which a
+// view that keeps its state in memory needs to rebuild it after a restart.
 //
 // SubscribeBatched calls onBatchEnd after each fetched batch has gone through
 // onRecord. Offsets commit only when it returns nil; an error means the batch

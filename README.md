@@ -45,7 +45,7 @@ Every step of a trip (request, match, cancellation, pickup, dropoff, abandonment
 
 - `trace-writer` turns each consumed batch into its own Parquet file and commits offsets only once the file is complete. If it dies mid-batch, Kafka redelivers and the trips already on disk are skipped. A write that fails is retried until it goes through; only records that can't be decoded go to a dead-letter topic.
 - `metrics-aggregator` serves Prometheus metrics. Run two and they split the partitions; Prometheus adds them up.
-- `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser.
+- `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser. It reads every topic from the start each time it launches, so a restart doesn't lose count.
 
 Smaller pieces: surge per H3 resolution-8 cell (open requests over idle drivers, clamped to 1x to 3x, smoothed over 60 s), optional driver declines and cancellations, riders who give up after `--max-wait`, a Grafana dashboard, and a ridge-regression ETA model. The ETA model is a baseline. Trained on 2,000 routed pairs it predicts free-flow trip time with an in-sample R² of 0.89, nearly all of it from distance. Surge and the ETA model can both feed into batch matching (`--surge-premium`, `--eta-weight`); both are off by default and off in the headline.
 
@@ -121,7 +121,7 @@ experiments/reposition/ batch with and without repositioning
 - Waits count every rider who was picked up, including riders still aboard when a run stops. A rider never picked up has no wait and is left out.
 - Routes are within 3x optimal by construction. In the 100-pair test the worst one took 54% longer than the best path.
 - Region sharding runs in one process. Splitting it across processes needs a way to hand off drivers near region boundaries, and that isn't written.
-- `live-view` rebuilds its whole snapshot ten times a second and sends it to every client, which won't hold up for a fleet in the tens of thousands.
+- `live-view` rebuilds its whole snapshot ten times a second and sends it to every client, which won't hold up for a fleet in the tens of thousands. Replaying every topic from the start on launch also gets slower as the log grows.
 - Trace dedup remembers the last 100,000 trips. A trip redelivered after it has aged out gets written twice.
 
 ## License

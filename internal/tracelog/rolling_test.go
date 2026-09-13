@@ -170,3 +170,37 @@ func rowsOnDisk(t *testing.T, dir string) int {
 	}
 	return total
 }
+
+// Replicas share one directory. One that dies after writing a batch, before
+// committing it, has the batch redelivered to another, which mustn't write it
+// again.
+func TestRollingRecorderSkipsTripsAnotherReplicaWrote(t *testing.T) {
+	dir := t.TempDir()
+	a, err := NewRollingRecorder(dir)
+	if err != nil {
+		t.Fatalf("open a: %v", err)
+	}
+	b, err := NewRollingRecorder(dir)
+	if err != nil {
+		t.Fatalf("open b: %v", err)
+	}
+	for i := int64(1); i <= 3; i++ {
+		if err := a.Record(testTrip(i)); err != nil {
+			t.Fatalf("a record %d: %v", i, err)
+		}
+	}
+	if err := a.EndBatch(); err != nil {
+		t.Fatalf("a end batch: %v", err)
+	}
+	for i := int64(1); i <= 4; i++ {
+		if err := b.Record(testTrip(i)); err != nil {
+			t.Fatalf("b record %d: %v", i, err)
+		}
+	}
+	if err := b.EndBatch(); err != nil {
+		t.Fatalf("b end batch: %v", err)
+	}
+	if got := rowsOnDisk(t, dir); got != 4 {
+		t.Errorf("want 4 trips on disk, got %d", got)
+	}
+}

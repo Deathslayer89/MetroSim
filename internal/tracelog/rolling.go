@@ -38,7 +38,10 @@ func keyOf(t TripInput) tripKey {
 // batch. Each file is written under a .tmp name, synced and renamed before its
 // batch's offsets commit, so a crash mid-batch leaves only a .tmp file, which
 // startup deletes; Kafka redelivers the batch and dedup drops trips already on
-// disk.
+// disk. Replicas can share a directory: before writing, a recorder reads the
+// keys from files the others have written since it last looked, so a batch
+// that one wrote and died before committing isn't written again by the replica
+// Kafka hands it to.
 type RollingRecorder struct {
 	dir         string
 	instanceTag string // unique per process; keeps restarts from clobbering each other's files
@@ -46,6 +49,7 @@ type RollingRecorder struct {
 
 	mu              sync.Mutex
 	seen            *boundedSet[tripKey]
+	scanned         map[string]bool // files, by name, whose keys are already in seen
 	currentBuf      []TripInput
 	currentBatchIDs map[tripKey]struct{} // keys in currentBuf, so a redelivered record isn't buffered twice
 }
@@ -74,6 +78,7 @@ func NewRollingRecorderWithCap(dir string, capacity int) (*RollingRecorder, erro
 		dir:         dir,
 		instanceTag: fmt.Sprintf("%d", time.Now().UnixNano()),
 		seen:        newBoundedSet[tripKey](capacity),
+		scanned:     make(map[string]bool),
 	}
 	if err := r.loadSeen(); err != nil {
 		return nil, fmt.Errorf("scan %s: %w", dir, err)
@@ -100,8 +105,9 @@ func (r *RollingRecorder) loadSeen() error {
 	var perFile [][]tripKey
 	total := 0
 	for _, path := range files {
+		r.scanned[filepath.Base(path)] = true
 		if total >= r.seen.capacity {
-			break
+			continue
 		}
 		keys, err := readKeys(path)
 		if err != nil {
@@ -113,6 +119,31 @@ func (r *RollingRecorder) loadSeen() error {
 	}
 	for i := len(perFile) - 1; i >= 0; i-- {
 		for _, k := range perFile[i] {
+			r.seen.Add(k)
+		}
+	}
+	return nil
+}
+
+// absorbOthers adds the keys from files that appeared since the last look,
+// which are other replicas'. It needs r.mu held.
+func (r *RollingRecorder) absorbOthers() error {
+	files, err := filepath.Glob(filepath.Join(r.dir, "*.parquet"))
+	if err != nil {
+		return err
+	}
+	for _, path := range files {
+		name := filepath.Base(path)
+		if r.scanned[name] {
+			continue
+		}
+		r.scanned[name] = true
+		keys, err := readKeys(path)
+		if err != nil {
+			log.Printf("rolling recorder: skipping %s: %v", name, err)
+			continue
+		}
+		for _, k := range keys {
 			r.seen.Add(k)
 		}
 	}
@@ -190,6 +221,20 @@ func (r *RollingRecorder) EndBatch() error {
 	if len(r.currentBuf) == 0 {
 		return nil
 	}
+	if err := r.absorbOthers(); err != nil {
+		r.resetBatchState()
+		return fmt.Errorf("scan %s: %w", r.dir, err)
+	}
+	fresh := make([]TripInput, 0, len(r.currentBuf))
+	for _, t := range r.currentBuf {
+		if !r.seen.Has(keyOf(t)) {
+			fresh = append(fresh, t)
+		}
+	}
+	if len(fresh) == 0 {
+		r.resetBatchState()
+		return nil
+	}
 
 	seq := r.batchSeq.Add(1)
 	hour := time.Now().UTC().Format("2006-01-02T15")
@@ -201,7 +246,7 @@ func (r *RollingRecorder) EndBatch() error {
 		r.resetBatchState() // partial file never created; drop the buffer so retry can rebuild
 		return fmt.Errorf("open %s: %w", tmp, err)
 	}
-	for _, t := range r.currentBuf {
+	for _, t := range fresh {
 		if err := rec.Record(t); err != nil {
 			rec.Close()
 			os.Remove(tmp)
@@ -225,7 +270,8 @@ func (r *RollingRecorder) EndBatch() error {
 	}
 
 	// Mark trips seen only once the footer is written.
-	for _, t := range r.currentBuf {
+	r.scanned[filepath.Base(path)] = true
+	for _, t := range fresh {
 		r.seen.Add(keyOf(t))
 	}
 	r.resetBatchState()

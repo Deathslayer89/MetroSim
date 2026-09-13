@@ -53,6 +53,13 @@ var (
 // Publish starts dropping events: about a minute of events from 180 cars.
 const maxBuffered = 100_000
 
+// A batched subscriber's fetch returns once it holds batchFetchBytes or has
+// waited batchFetchWait.
+const (
+	batchFetchBytes = 1 << 20
+	batchFetchWait  = 10 * time.Second
+)
+
 func dlqTopic(topic string) string { return "metrosim.dlq." + topic }
 
 // Bus is the Kafka transport. Implements events.Bus over a single producer
@@ -186,8 +193,12 @@ func (b *Bus) Subscribe(topic, group string, handler func(proto.Message)) error 
 
 // SubscribeBatched calls onBatchEnd after each fetch has gone through onRecord
 // and commits the fetch only once onBatchEnd succeeds, so a crash mid-batch
-// means redelivery rather than loss. A failing onBatchEnd is retried. An empty
-// group joins none: it reads every partition from the start and commits nothing.
+// means redelivery rather than loss. A failing onBatchEnd is retried. In a
+// group, a rebalance waits until the fetch in hand is committed, so partitions
+// never move with a batch half done; a sink failing for longer than the
+// group's rebalance timeout gets this member dropped, and its batch goes to
+// another. An empty group joins none: it reads every partition from the start
+// and commits nothing.
 func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message), onBatchEnd func() error) error {
 	factory, ok := decoderFor(topic)
 	if !ok {
@@ -200,7 +211,12 @@ func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message)
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	}
 	if group != "" {
-		opts = append(opts, kgo.ConsumerGroup(group), kgo.DisableAutoCommit())
+		opts = append(opts, kgo.ConsumerGroup(group), kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll())
+	}
+	if onBatchEnd != nil {
+		// A batched sink writes a file per fetch, so a fetch waits to fill up
+		// instead of returning with the first record that arrives.
+		opts = append(opts, kgo.FetchMinBytes(batchFetchBytes), kgo.FetchMaxWait(batchFetchWait))
 	}
 	consumer, err := kgo.NewClient(opts...)
 	if err != nil {
@@ -220,55 +236,60 @@ func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message)
 }
 
 func (b *Bus) consume(client *kgo.Client, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) {
-	for {
-		fetches := client.PollFetches(b.ctx)
-		if b.ctx.Err() != nil {
-			return
-		}
-		if errs := fetches.Errors(); len(errs) > 0 {
-			log.Printf("kafka: poll %s: %v", topic, errs[0].Err)
-			if fetches.NumRecords() == 0 {
-				if !b.sleep(time.Second) {
-					return
-				}
-				continue
-			}
-		}
+	for b.consumeFetch(client, topic, commit, factory, onRecord, onBatchEnd) {
+	}
+}
 
-		var msgs []proto.Message
-		var dead []*kgo.Record
-		fetches.EachRecord(func(rec *kgo.Record) {
-			msg := factory()
-			if err := proto.Unmarshal(rec.Value, msg); err != nil {
-				unmarshalFailures.WithLabelValues(topic).Inc()
-				dead = append(dead, rec)
-				return
-			}
-			msgs = append(msgs, msg)
-		})
-		if len(msgs) == 0 && len(dead) == 0 {
-			continue
-		}
-
-		if len(msgs) > 0 && !b.deliverBatch(topic, msgs, onRecord, onBatchEnd) {
-			return // closing mid-retry: leave the batch uncommitted
-		}
-		if !commit {
-			continue // no group: nothing to move past, and a restart reads from the start
-		}
-		// A record that doesn't decode never will, so it goes to the DLQ. Keep at
-		// it until the DLQ takes them, since the commit below moves past them.
-		for len(dead) > 0 && !b.sendToDLQ(topic, dead) {
-			if !b.sleep(endBatchMaxBackoff) {
-				return
-			}
-		}
-		// Closing abandons a commit still waiting on the broker; the batch comes
-		// again after a restart.
-		if err := client.CommitUncommittedOffsets(b.ctx); err != nil {
-			log.Printf("kafka: commit %s: %v", topic, err)
+// consumeFetch polls once, then delivers and commits what came back, and
+// reports whether to keep going. A rebalance the poll held back goes ahead
+// once it returns.
+func (b *Bus) consumeFetch(client *kgo.Client, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) bool {
+	defer client.AllowRebalance()
+	fetches := client.PollFetches(b.ctx)
+	if b.ctx.Err() != nil {
+		return false
+	}
+	if errs := fetches.Errors(); len(errs) > 0 {
+		log.Printf("kafka: poll %s: %v", topic, errs[0].Err)
+		if fetches.NumRecords() == 0 {
+			return b.sleep(time.Second)
 		}
 	}
+
+	var msgs []proto.Message
+	var dead []*kgo.Record
+	fetches.EachRecord(func(rec *kgo.Record) {
+		msg := factory()
+		if err := proto.Unmarshal(rec.Value, msg); err != nil {
+			unmarshalFailures.WithLabelValues(topic).Inc()
+			dead = append(dead, rec)
+			return
+		}
+		msgs = append(msgs, msg)
+	})
+	if len(msgs) == 0 && len(dead) == 0 {
+		return true
+	}
+
+	if len(msgs) > 0 && !b.deliverBatch(topic, msgs, onRecord, onBatchEnd) {
+		return false // closing mid-retry: leave the batch uncommitted
+	}
+	if !commit {
+		return true // no group: nothing to move past, and a restart reads from the start
+	}
+	// A record that doesn't decode never will, so it goes to the DLQ. Keep at
+	// it until the DLQ takes them, since the commit below moves past them.
+	for len(dead) > 0 && !b.sendToDLQ(topic, dead) {
+		if !b.sleep(endBatchMaxBackoff) {
+			return false
+		}
+	}
+	// Closing abandons a commit still waiting on the broker; the batch comes
+	// again after a restart.
+	if err := client.CommitUncommittedOffsets(b.ctx); err != nil {
+		log.Printf("kafka: commit %s: %v", topic, err)
+	}
+	return true
 }
 
 // deliverBatch runs msgs through onRecord and then onBatchEnd, retrying the

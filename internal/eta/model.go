@@ -91,6 +91,7 @@ func Fit(X [][]float64, y []float64, names []string, lambda float64) (*Model, er
 
 	mean := make([]float64, d)
 	std := make([]float64, d)
+	constant := make([]bool, d)
 	for j := 0; j < d; j++ {
 		for i := 0; i < n; i++ {
 			mean[j] += X[i][j]
@@ -104,8 +105,9 @@ func Fit(X [][]float64, y []float64, names []string, lambda float64) (*Model, er
 			ss += diff * diff
 		}
 		std[j] = math.Sqrt(ss / float64(n))
-		if std[j] == 0 {
-			std[j] = 1 // constant feature: leave it as-is, weight will go to ~0
+		if std[j] <= 1e-12*math.Max(1, math.Abs(mean[j])) {
+			std[j] = 1 // never varies, so its standardized column is all zeros
+			constant[j] = true
 		}
 	}
 
@@ -142,6 +144,9 @@ func Fit(X [][]float64, y []float64, names []string, lambda float64) (*Model, er
 	}
 	for a := 1; a < p; a++ {
 		A[a][a] += lambda
+		if constant[a-1] {
+			A[a][a]++ // holds its weight at 0 without leaving the system singular when lambda is 0
+		}
 	}
 
 	w, err := solve(A, b)

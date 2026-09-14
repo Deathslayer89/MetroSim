@@ -14,7 +14,6 @@ import (
 	"flag"
 	"io"
 	"log"
-	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -206,15 +205,5 @@ func haversineCells(a, b string) float64 {
 	if err1 != nil || err2 != nil {
 		return -1
 	}
-	return haversine(la.Lat, la.Lng, lb.Lat, lb.Lng)
-}
-
-func haversine(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadiusM = 6_371_000
-	rad := math.Pi / 180
-	dLat := (lat2 - lat1) * rad
-	dLon := (lon2 - lon1) * rad
-	h := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(lat1*rad)*math.Cos(lat2*rad)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	return 2 * earthRadiusM * math.Asin(math.Sqrt(h))
+	return graph.HaversineMeters(la.Lat, la.Lng, lb.Lat, lb.Lng)
 }

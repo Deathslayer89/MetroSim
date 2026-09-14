@@ -96,6 +96,18 @@ func EuclideanDistance(n1, n2 *Node) float64 {
 	return math.Sqrt(dx*dx + dy*dy)
 }
 
+// HaversineMeters is the great-circle distance between two points, in meters.
+func HaversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusM = 6371000.0
+	rlat1 := lat1 * math.Pi / 180
+	rlat2 := lat2 * math.Pi / 180
+	dlat := (lat2 - lat1) * math.Pi / 180
+	dlon := (lon2 - lon1) * math.Pi / 180
+	a := math.Sin(dlat/2)*math.Sin(dlat/2) +
+		math.Cos(rlat1)*math.Cos(rlat2)*math.Sin(dlon/2)*math.Sin(dlon/2)
+	return earthRadiusM * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
 func (g *Graph) NodeCount() int {
 	return len(g.Nodes)
 }

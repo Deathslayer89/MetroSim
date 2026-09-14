@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"runtime"
 	"sort"
@@ -70,17 +69,6 @@ func parseMaxspeed(s string) float64 {
 		return v * 0.44704
 	}
 	return v / 3.6
-}
-
-func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadiusM = 6371000.0
-	rlat1 := lat1 * math.Pi / 180
-	rlat2 := lat2 * math.Pi / 180
-	dlat := (lat2 - lat1) * math.Pi / 180
-	dlon := (lon2 - lon1) * math.Pi / 180
-	a := math.Sin(dlat/2)*math.Sin(dlat/2) +
-		math.Cos(rlat1)*math.Cos(rlat2)*math.Sin(dlon/2)*math.Sin(dlon/2)
-	return earthRadiusM * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
 
 type wayRec struct {
@@ -255,7 +243,7 @@ func assemble(ways []wayRec, nodes map[pmosm.NodeID]*pmosm.Node) (*graph.Graph, 
 			if !aok || !bok {
 				continue
 			}
-			length := haversineMeters(a.Lat, a.Lon, b.Lat, b.Lon)
+			length := graph.HaversineMeters(a.Lat, a.Lon, b.Lat, b.Lon)
 			if length <= 0 {
 				continue
 			}

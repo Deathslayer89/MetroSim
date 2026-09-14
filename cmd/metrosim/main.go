@@ -46,8 +46,8 @@ func main() {
 	maxWait := flag.Duration("max-wait", 0, "abandon a request unmatched this long (rider gives up); 0 disables")
 	repositionAfter := flag.Duration("reposition-after", 0, "send cars idle this long toward recent demand; 0 disables")
 	flag.Parse()
-	if !(*speed > 0) || math.IsInf(*speed, 1) {
-		log.Fatalf("--speed must be a positive number, got %g", *speed)
+	if err := checkFlags(*speed, *etaWeight, *etaModelPath); err != nil {
+		log.Fatal(err)
 	}
 
 	g := mustLoadGraph(*osmPath)
@@ -286,4 +286,16 @@ func runHardcodedDemo(engine *simulation.Engine, g *graph.Graph) {
 			DestinationNode: spawnNodes[(i+4)%len(spawnNodes)],
 		})
 	}
+}
+
+// checkFlags rejects a speed that would stop or reverse the clock, and an ETA
+// weight with no model to supply the trip durations it weighs.
+func checkFlags(speed, etaWeight float64, etaModel string) error {
+	if !(speed > 0) || math.IsInf(speed, 1) {
+		return fmt.Errorf("--speed must be a positive number, got %g", speed)
+	}
+	if etaWeight != 0 && etaModel == "" {
+		return fmt.Errorf("--eta-weight %g needs --eta-model", etaWeight)
+	}
+	return nil
 }

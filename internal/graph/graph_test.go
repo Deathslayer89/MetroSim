@@ -53,3 +53,10 @@ func TestGetNodeAndEdgeBounds(t *testing.T) {
 		t.Errorf("GetEdgeWeight on missing edge should be +Inf, got %v", w)
 	}
 }
+
+// One degree of latitude is the Earth's radius times pi/180.
+func TestHaversineMetersOneDegree(t *testing.T) {
+	if got, want := HaversineMeters(0, 0, 1, 0), 6371000*math.Pi/180; math.Abs(got-want) > 1e-6 {
+		t.Errorf("one degree of latitude: want %.3f m, got %.3f m", want, got)
+	}
+}

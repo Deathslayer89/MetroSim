@@ -71,3 +71,26 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Error("round-trip changed predictions")
 	}
 }
+
+// Traces from runs without surge pricing have surge 1.0 on every trip, and with
+// lambda 0 that column left the normal equations singular.
+func TestFitHandlesAFeatureThatNeverVaries(t *testing.T) {
+	var X [][]float64
+	var y []float64
+	for dist := 200.0; dist <= 8000; dist += 200 {
+		for hour := 0.0; hour < 24; hour += 3 {
+			X = append(X, Features(dist, 1, hour))
+			y = append(y, 0.1*dist+30)
+		}
+	}
+	m, err := Fit(X, y, FeatureNames, 0)
+	if err != nil {
+		t.Fatalf("fit: %v", err)
+	}
+	if w := m.Weights[2]; math.Abs(w) > 1e-12 {
+		t.Errorf("surge never varies, but its weight is %v", w)
+	}
+	if got := m.Predict(Features(1000, 1, 5)); math.Abs(got-130) > 1e-6 {
+		t.Errorf("prediction for 1000 m: want 130 s, got %v", got)
+	}
+}

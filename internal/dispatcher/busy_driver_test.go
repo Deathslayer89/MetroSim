@@ -35,7 +35,7 @@ func TestDropoffAtPickupDoesNotDoubleBook(t *testing.T) {
 	d.SubmitRequest(&Request{ID: 1, PickupNode: 1, DestinationNode: 1, RequestTime: now})
 	d.Tick(vehicles, now, nil)
 	d.SubmitRequest(&Request{ID: 2, PickupNode: 5, DestinationNode: 8, RequestTime: now})
-	for i := 0; i < 600 && len(d.GetCompletedRides()) < 2; i++ {
+	for i := 0; i < 600 && d.CompletedCount() < 2; i++ {
 		now = now.Add(time.Second)
 		car.Move(1)
 		d.Tick(vehicles, now, nil)
@@ -43,7 +43,7 @@ func TestDropoffAtPickupDoesNotDoubleBook(t *testing.T) {
 			t.Fatalf("after %s driver 1 holds %d rides", now.Sub(t0), n)
 		}
 	}
-	if got := len(d.GetCompletedRides()); got != 2 {
+	if got := d.CompletedCount(); got != 2 {
 		t.Errorf("want both rides completed, got %d with %d still active", got, d.GetActiveRideCount())
 	}
 }

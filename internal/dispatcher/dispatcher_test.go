@@ -55,7 +55,7 @@ func TestDispatcherCompletesAllRides(t *testing.T) {
 		d.Tick(vehicles, now, nil)
 	}
 
-	if got := len(d.GetCompletedRides()); got != 5 {
+	if got := d.CompletedCount(); got != 5 {
 		t.Fatalf("want 5 completed rides, got %d", got)
 	}
 	if got := collector.GetStats().TotalRides; got != 5 {

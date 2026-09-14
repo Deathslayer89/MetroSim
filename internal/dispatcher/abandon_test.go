@@ -64,3 +64,31 @@ func TestNoAbandonWhenDisabled(t *testing.T) {
 		t.Errorf("disabled: want pending=1 abandoned=0, got pending=%d abandoned=%d", d.GetPendingCount(), d.AbandonedCount())
 	}
 }
+
+// A request with no route from pickup to dropoff is turned away before a driver
+// is sent; picked up, its rider could never be delivered.
+func TestUnroutableRequestIsAbandonedBeforeMatching(t *testing.T) {
+	g := graph.NewGraph()
+	g.AddNode(&graph.Node{ID: 0, Lat: 37.7700, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 1, Lat: 37.7710, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 2, Lat: 37.7720, Lon: -122.4200})
+	g.AddEdge(&graph.Edge{ID: 0, FromNode: 0, ToNode: 1, Length: 111, SpeedLimit: 10, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 1, FromNode: 2, ToNode: 1, Length: 111, SpeedLimit: 10, Lanes: 1}) // one-way, so nothing leads from 1 to 2
+	planner := pathfinding.NewPathPlanner(g, nil)
+	bus := events.NewMemoryBus()
+	d := NewDispatcher(g, planner, bus, events.NewStamper(events.RunInfo{}))
+	var gaveUp []*eventspb.TripAbandoned
+	if err := events.SubscribeTripAbandoned(bus, "test", func(e *eventspb.TripAbandoned) { gaveUp = append(gaveUp, e) }); err != nil {
+		t.Fatal(err)
+	}
+	car := agent.NewVehicle(1, 0, g, planner)
+	t0 := time.Unix(1_700_000_000, 0)
+	d.SubmitRequest(&Request{ID: 1, PickupNode: 1, DestinationNode: 2, RequestTime: t0})
+	d.Tick(map[int]*agent.Vehicle{1: car}, t0, nil)
+	if d.GetActiveRideCount() != 0 || d.GetPendingCount() != 0 || d.AbandonedCount() != 1 {
+		t.Errorf("want the request turned away: %d active, %d pending, %d abandoned", d.GetActiveRideCount(), d.GetPendingCount(), d.AbandonedCount())
+	}
+	if len(gaveUp) != 1 || gaveUp[0].RequestId != 1 {
+		t.Errorf("want one TripAbandoned for request 1, got %v", gaveUp)
+	}
+}

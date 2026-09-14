@@ -33,6 +33,7 @@ type Request struct {
 	RequestTime     time.Time
 	AssignedDriver  int
 	AssignmentTime  time.Time
+	routeChecked    bool // dropUnroutable found a route from pickup to dropoff
 }
 
 type Ride struct {
@@ -70,19 +71,19 @@ func (rs RideState) String() string {
 // Dispatcher matches requests to drivers through a Policy and publishes each
 // trip's lifecycle on the event bus, without knowing who subscribes.
 type Dispatcher struct {
-	driverIndex    *H3DriverIndex
-	pendingQueue   []*Request
-	activeRides    map[int]*Ride
-	completedRides []*Ride
-	nextRideID     int
-	graph          *graph.Graph
-	pathPlanner    *pathfinding.PathPlanner
-	bus            events.Bus
-	stamper        *events.Stamper
-	policy         Policy
-	surgeAt        func(lat, lon float64) float64
-	etaEstimate    func(fromNode, toNode int) float64 // optional cheap matching-cost ETA; nil = route with A*
-	etaModel       *eta.Model                         // nil disables predicted-ETA stamping
+	driverIndex  *H3DriverIndex
+	pendingQueue []*Request
+	activeRides  map[int]*Ride
+	completed    int // rides completed; their details go out as TripCompleted
+	nextRideID   int
+	graph        *graph.Graph
+	pathPlanner  *pathfinding.PathPlanner
+	bus          events.Bus
+	stamper      *events.Stamper
+	policy       Policy
+	surgeAt      func(lat, lon float64) float64
+	etaEstimate  func(fromNode, toNode int) float64 // optional cheap matching-cost ETA; nil = route with A*
+	etaModel     *eta.Model                         // nil disables predicted-ETA stamping
 
 	driverBehavior DriverBehavior
 	behaviorRNG    *rand.Rand
@@ -109,7 +110,8 @@ func (d *Dispatcher) SetMaxWait(wait time.Duration) {
 	d.maxWait = wait
 }
 
-// AbandonedCount returns how many requests have abandoned the queue unserved.
+// AbandonedCount returns how many requests left unserved: riders who gave up
+// waiting, and requests with no route to their dropoff.
 func (d *Dispatcher) AbandonedCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -156,16 +158,15 @@ func (d *Dispatcher) predictETA(pickupNode, dropoffNode int, surge float64, now 
 // in tests where labels don't matter.
 func NewDispatcher(g *graph.Graph, planner *pathfinding.PathPlanner, bus events.Bus, stamper *events.Stamper) *Dispatcher {
 	return &Dispatcher{
-		driverIndex:    NewH3DriverIndex(),
-		pendingQueue:   make([]*Request, 0),
-		activeRides:    make(map[int]*Ride),
-		completedRides: make([]*Ride, 0),
-		nextRideID:     1,
-		graph:          g,
-		pathPlanner:    planner,
-		bus:            bus,
-		stamper:        stamper,
-		policy:         GreedyPolicy{},
+		driverIndex:  NewH3DriverIndex(),
+		pendingQueue: make([]*Request, 0),
+		activeRides:  make(map[int]*Ride),
+		nextRideID:   1,
+		graph:        g,
+		pathPlanner:  planner,
+		bus:          bus,
+		stamper:      stamper,
+		policy:       GreedyPolicy{},
 	}
 }
 
@@ -246,7 +247,7 @@ func (d *Dispatcher) Tick(vehicles map[int]*agent.Vehicle, currentTime time.Time
 	d.mu.Lock()
 	// Publish after unlocking: a MemoryBus subscriber runs on this goroutine
 	// and would deadlock if it called back into the dispatcher.
-	abandonedEvents := d.expireStale(currentTime)
+	abandonedEvents := append(d.expireStale(currentTime), d.dropUnroutable(currentTime)...)
 	cancelledEvents, pickupEvents, completedEvents := d.updateActiveRides(vehicles, currentTime, edgeWeights)
 	matchedEvents := d.runMatching(vehicles, currentTime, edgeWeights)
 	d.repositionIdle(vehicles, currentTime, edgeWeights)
@@ -284,18 +285,45 @@ func (d *Dispatcher) expireStale(now time.Time) []*eventspb.TripAbandoned {
 			kept = append(kept, req)
 			continue
 		}
-		d.abandoned++
-		meta := d.stamper.MetaFor(now)
-		meta.PartitionKey = tripKey(req.ID)
-		out = append(out, &eventspb.TripAbandoned{
-			Meta:       meta,
-			RequestId:  int64(req.ID),
-			PickupNode: int64(req.PickupNode),
-			WaitedS:    waited.Seconds(),
-		})
+		out = append(out, d.abandon(req, now))
 	}
 	d.pendingQueue = kept
 	return out
+}
+
+// dropUnroutable abandons requests with no route from pickup to dropoff,
+// checking each once. It needs d.mu held.
+func (d *Dispatcher) dropUnroutable(now time.Time) []*eventspb.TripAbandoned {
+	var out []*eventspb.TripAbandoned
+	kept := d.pendingQueue[:0]
+	for _, req := range d.pendingQueue {
+		if !req.routeChecked {
+			req.routeChecked = true
+			if req.PickupNode != req.DestinationNode {
+				if _, err := d.pathPlanner.FindPath(req.PickupNode, req.DestinationNode); err != nil {
+					out = append(out, d.abandon(req, now))
+					continue
+				}
+			}
+		}
+		kept = append(kept, req)
+	}
+	d.pendingQueue = kept
+	return out
+}
+
+// abandon counts req as having left unserved and returns the event that says
+// so. It needs d.mu held.
+func (d *Dispatcher) abandon(req *Request, now time.Time) *eventspb.TripAbandoned {
+	d.abandoned++
+	meta := d.stamper.MetaFor(now)
+	meta.PartitionKey = tripKey(req.ID)
+	return &eventspb.TripAbandoned{
+		Meta:       meta,
+		RequestId:  int64(req.ID),
+		PickupNode: int64(req.PickupNode),
+		WaitedS:    now.Sub(req.RequestTime).Seconds(),
+	}
 }
 
 // busyDrivers returns the drivers holding an active ride. A car already at its
@@ -457,7 +485,7 @@ func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentT
 			if driver.IsIdle() && driver.CurrentNode == ride.Request.DestinationNode {
 				ride.DropoffTime = currentTime
 				ride.State = RideStateCompleted
-				d.completedRides = append(d.completedRides, ride)
+				d.completed++
 				delete(d.activeRides, rideID)
 
 				pickup, perr := d.graph.GetNode(ride.Request.PickupNode)
@@ -503,12 +531,12 @@ func (d *Dispatcher) GetActiveRideCount() int {
 	return len(d.activeRides)
 }
 
-func (d *Dispatcher) GetCompletedRides() []*Ride {
+// CompletedCount returns how many rides have been completed. The rides aren't
+// kept; TripCompleted carries their details.
+func (d *Dispatcher) CompletedCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	rides := make([]*Ride, len(d.completedRides))
-	copy(rides, d.completedRides)
-	return rides
+	return d.completed
 }
 
 // RidesInProgress returns active rides whose rider is aboard, in ride-ID order.

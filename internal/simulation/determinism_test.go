@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/Deathslayer89/MetroSim/internal/dispatcher"
+	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
 	"github.com/Deathslayer89/MetroSim/internal/scenario"
 	"github.com/Deathslayer89/MetroSim/internal/traffic"
+	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
 // streetGrid is an n×n grid of two-way streets spaced meters apart. At 300 m a
@@ -65,6 +67,13 @@ func runWaits(t *testing.T, seed int64) []float64 {
 		TickRate:         10.0,
 		SpeedMultiplier:  1.0,
 	})
+	var waits []float64
+	err := events.SubscribeTripCompleted(engine.Bus(), "test", func(c *eventspb.TripCompleted) {
+		waits = append(waits, c.PickupTime.AsTime().Sub(c.RequestTime.AsTime()).Seconds())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	d := engine.GetDispatcher()
 	d.SetPolicy(dispatcher.NewBatchPolicy(3 * time.Second))
 	d.SetDriverBehavior(dispatcher.DriverBehavior{CancelRate: 0.02}, seed)
@@ -89,11 +98,6 @@ func runWaits(t *testing.T, seed int64) []float64 {
 		t.Fatal("no car repositioned, so the run doesn't exercise it")
 	}
 
-	completed := d.GetCompletedRides()
-	waits := make([]float64, 0, len(completed))
-	for _, r := range completed {
-		waits = append(waits, r.PickupTime.Sub(r.Request.RequestTime).Seconds())
-	}
 	return waits
 }
 

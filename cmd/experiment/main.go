@@ -31,6 +31,7 @@ import (
 	"github.com/Deathslayer89/MetroSim/internal/stats"
 	"github.com/Deathslayer89/MetroSim/internal/tracelog"
 	"github.com/Deathslayer89/MetroSim/internal/traffic"
+	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
 type runResult struct {
@@ -304,6 +305,16 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 		engine.GetDispatcher().SetETAModel(etaModel)
 	}
 
+	// The dispatcher doesn't keep completed rides, so their waits come from the
+	// events as they finish.
+	var waits []float64
+	err := events.SubscribeTripCompleted(engine.Bus(), "experiment", func(c *eventspb.TripCompleted) {
+		waits = append(waits, c.PickupTime.AsTime().Sub(c.RequestTime.AsTime()).Seconds())
+	})
+	if err != nil {
+		return runResult{}, err
+	}
+
 	if traceDir != "" {
 		_ = os.MkdirAll(traceDir, 0o755)
 		path := filepath.Join(traceDir, fmt.Sprintf("run_%s_%s_seed%d.parquet", sc.Name, polName, seed))
@@ -342,7 +353,7 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 		}
 	}
 
-	completed := d.GetCompletedRides()
+	completed := len(waits)
 	aboard := d.RidesInProgress()
 	waiting := d.Waiting()
 	end := engine.GetCurrentTime()
@@ -353,15 +364,14 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 		bs := d.BehaviorStats()
 		log.Printf("  [%s seed=%d] driver friction: %d declines, %d cancellations", polName, seed, bs.Declines, bs.Cancellations)
 	}
-	waits := make([]float64, 0, len(completed)+len(aboard)+len(waiting))
-	for _, r := range append(completed, aboard...) {
+	for _, r := range aboard {
 		waits = append(waits, r.PickupTime.Sub(r.Request.RequestTime).Seconds())
 	}
 	pickedUp := len(waits)
 	for _, req := range waiting {
 		waits = append(waits, end.Sub(req.RequestTime).Seconds())
 	}
-	res := runResult{seed: seed, waits: waits, pickedUp: pickedUp, requested: gen.RequestCount(), completed: len(completed), moves: d.RepositionCount()}
+	res := runResult{seed: seed, waits: waits, pickedUp: pickedUp, requested: gen.RequestCount(), completed: completed, moves: d.RepositionCount()}
 	for _, v := range engine.GetVehicles() {
 		res.drivenKm += v.DrivenMeters / 1000
 		res.repositionKm += v.RepositionMeters / 1000

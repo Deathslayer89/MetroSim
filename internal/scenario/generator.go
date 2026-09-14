@@ -77,11 +77,11 @@ func (g *Generator) VehicleSpawnNodes(gr *graph.Graph) []int {
 // RequestCount returns how many requests this generator has emitted so far.
 func (g *Generator) RequestCount() int { return g.nextID - 1 }
 
-// NextArrivals draws Poisson(rate(elapsed) * dt) requests for the next tick.
-// Returns nil once elapsed exceeds the scenario duration so headless runners
-// can drain without taking new arrivals.
+// NextArrivals draws Poisson(rate(elapsed) * dt) requests for the tick that
+// starts at elapsed. Returns nil once elapsed reaches the scenario duration so
+// headless runners can drain without taking new arrivals.
 func (g *Generator) NextArrivals(elapsed, dt time.Duration) []*dispatcher.Request {
-	if elapsed > g.scenario.Duration {
+	if elapsed >= g.scenario.Duration {
 		return nil
 	}
 	lambda := g.rateAt(elapsed)
@@ -130,10 +130,9 @@ func (g *Generator) rateAt(elapsed time.Duration) float64 {
 	return 0
 }
 
-// samplePoisson draws from a Poisson distribution with Knuth's method, whose
-// exp(-mean) underflows past a mean of about 700. A larger mean is drawn as a
-// sum of smaller ones, which is exact for a Poisson; a mean under 30, like the
-// per-tick means here, takes a single draw.
+// samplePoisson uses Knuth's method, whose exp(-mean) underflows past a mean
+// of about 700, so a larger mean is drawn as a sum of smaller ones, which is
+// exact for a Poisson.
 func samplePoisson(mean float64, rng *rand.Rand) int {
 	if !(mean > 0) || math.IsInf(mean, 1) {
 		return 0

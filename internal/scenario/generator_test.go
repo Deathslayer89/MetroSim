@@ -192,3 +192,18 @@ func equalInts(a, b []int) bool {
 	}
 	return true
 }
+
+// Ticks start at 0, dt, 2dt and so on. The tick that starts at the scenario's
+// end covers time after it, so it draws no one.
+func TestNoArrivalsFromTheTickAtTheEnd(t *testing.T) {
+	s := mkScenario(1)
+	s.Arrivals.RateSegments = []RatePoint{{T: 0, Rate: 1000}, {T: 60 * time.Second, Rate: 1000}}
+	gen := mustGenerator(t, s, buildTinyGraph(t))
+	const dt = time.Second / 10
+	if got := gen.NextArrivals(s.Duration-dt, dt); len(got) == 0 {
+		t.Fatal("the last tick inside the scenario drew no one at 1,000 requests a second")
+	}
+	if got := gen.NextArrivals(s.Duration, dt); len(got) != 0 {
+		t.Errorf("the tick starting at the scenario's end drew %d requests", len(got))
+	}
+}

@@ -64,3 +64,19 @@ func TestNearestKDeterministicOnTies(t *testing.T) {
 		}
 	}
 }
+
+// With fewer than k drivers inside the search rings, NearestK looks at every
+// idle driver instead of returning the few it found.
+func TestNearestKWidensWhenTheRingsHoldTooFew(t *testing.T) {
+	idx := NewH3DriverIndex()
+	idx.Insert(1, 37.7750, -122.4190) // a block from the pickup
+	idx.Insert(2, 37.8250, -122.4190) // about 5.5 km north, past the rings
+	got := idx.NearestK(37.7749, -122.4194, 2)
+	ids := make([]int, len(got))
+	for i, d := range got {
+		ids[i] = d.ID
+	}
+	if len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Errorf("want drivers 1 then 2, got %v", ids)
+	}
+}

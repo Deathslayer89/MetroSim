@@ -98,7 +98,10 @@ func (idx *H3DriverIndex) NearestK(lat, lon float64, k int) []*DriverLocation {
 		}
 	}
 
-	if len(candidates) == 0 {
+	// Fewer than k within the rings, as when most cars nearby are busy: look at
+	// every idle driver, or a request settles for the one or two it found.
+	if len(candidates) < k {
+		candidates = candidates[:0]
 		for _, loc := range idx.locations {
 			candidates = append(candidates, loc)
 		}

@@ -10,29 +10,29 @@ It depends on how busy the fleet is. At the downtown scenario's normal demand ba
 
 | demand | requests an hour | greedy mean wait | batch mean wait | batch minus greedy, 95% CI | batch faster in |
 |---|---:|---:|---:|---:|---:|
-| 1x | 426 | 112.5 s | 113.8 s | +1.3 s [+1.1, +1.6] | 0 of 10 seeds |
-| 1.25x | 529 | 134.0 s | 134.8 s | +0.8 s [+0.1, +1.4] | 3 of 10 |
-| 1.5x | 639 | 168.6 s | 168.6 s | 0.0 s [-2.3, +2.2] | 4 of 10 |
-| 1.75x | 748 | 220.0 s | 215.9 s | -4.0 s [-7.8, -0.3] | 7 of 10 |
-| 2x | 857 | 358.3 s | 258.2 s | -98.6 s [-137.4, -59.3] | 9 of 10 |
+| 1x | 426 | 112.4 s | 113.8 s | +1.4 s [+1.1, +1.7] | 0 of 10 seeds |
+| 1.25x | 529 | 132.9 s | 134.0 s | +1.1 s [+0.6, +1.6] | 1 of 10 |
+| 1.5x | 639 | 167.6 s | 168.4 s | +0.8 s [-1.9, +3.4] | 2 of 10 |
+| 1.75x | 748 | 221.7 s | 215.3 s | -6.2 s [-11.8, -0.6] | 8 of 10 |
+| 2x | 857 | 359.0 s | 254.4 s | -103.0 s [-157.0, -48.9] | 10 of 10 |
 
-Each row is ten seeds per policy, one simulated hour each, with 180 cars and pickups concentrated in the Financial District, SoMa, the Mission and the Marina; the multiplier scales the scenario's arrival rate. A seed gives both policies exactly the same riders, so the comparison is paired, and the interval is a bootstrap over the ten per-seed differences. Every rider counts, including the few never picked up, with the time they had waited when the run ended.
+Each row is ten seeds per policy, one simulated hour each, with 180 cars and pickups concentrated in the Financial District, SoMa, the Mission and the Marina; the multiplier scales the scenario's arrival rate. A seed gives both policies exactly the same riders, so the comparison is paired, and the interval is a t-interval over the ten per-seed differences. Every rider counts, including the few never picked up, with the time they had waited when the run ended.
 
-At normal demand a 3-second window collects 0.35 new requests on average, so there's rarely a second request to trade drivers with, and holding each one for up to 3 s leaves batch 1.3 s slower, in every seed. As demand grows, requests start waiting for a free car, and the backlog gives the solver something to trade. At 2x, batch cuts the mean wait by 99 s and p95 from 1,100 s to 800 s, though the gap varies a lot by seed, from nothing in two seeds to 215 s in another. A first version of this comparison ranked greedy's drivers by straight-line distance and showed batch 16 s faster at normal demand; that gap was the ranking, not the batching. The full report, with the command and commit that produced it, is [experiments/headline/report.md](experiments/headline/report.md).
+At normal demand a 3-second window collects 0.35 new requests on average, so there's rarely a second request to trade drivers with, and holding each one for up to 3 s leaves batch 1.4 s slower in every seed. As demand grows, requests start waiting for a free car and the backlog gives the solver something to trade: batch is still slower at 1.25x, level at 1.5x, and ahead from 1.75x. At 2x it cuts the mean wait by 103 s and p95 from 1,105 s to 783 s, and wins every seed, by anywhere from 6 s to 235 s. A first version of this comparison ranked greedy's drivers by straight-line distance and showed batch 16 s faster at normal demand; that gap was the ranking, not the batching. The full report, with the command and commit that produced it, is [experiments/headline/report.md](experiments/headline/report.md).
 
 ```bash
 make fetch-osm    # ~30 MB San Francisco extract from bbbike.org
-make experiment   # 100 one-hour runs; about 7 minutes on 8 cores
+make experiment   # 100 one-hour runs; about 6 minutes on 8 cores
 ```
 
 What helps at normal demand is moving idle cars. Sending cars that have sat idle for two minutes toward recent demand cuts the batch policy's mean wait from 113.8 s to 79.1 s, on the same ten seeds:
 
 | policy | riders picked up | mean wait | p50 | p95 |
 |---|---:|---:|---:|---:|
-| batch | 4,259 (100.0%) | 113.8 s | 78.7 s | 305.1 s |
+| batch | 4,259 (100.0%) | 113.8 s | 78.9 s | 305.1 s |
 | batch with repositioning | 4,259 (100.0%) | 79.1 s | 43.7 s | 291.2 s |
 
-Repositioning won in all ten seeds, with a mean per-seed difference of -34.8 s and a 95% bootstrap interval of -36.6 to -32.6 s. The median wait falls by 35.0 s and p95 by 13.9 s. Cars made 600 repositioning trips per run, about 3.3 per car per hour, and the settings aren't tuned. The report is [experiments/reposition/report.md](experiments/reposition/report.md).
+Repositioning won in all ten seeds, with a mean per-seed difference of -34.7 s and a 95% t-interval of -37.0 to -32.4 s. The median wait falls by 35.2 s and p95 by 13.9 s. It isn't free: cars made 600 repositioning trips per run, about 3.3 per car per hour, and drove 1,347 km empty doing it, 29% of all their driving. The settings aren't tuned. The report is [experiments/reposition/report.md](experiments/reposition/report.md).
 
 ## How it works
 
@@ -123,7 +123,7 @@ experiments/reposition/ batch with and without repositioning
 ## Limitations
 
 - The headline compares matching alone, with repositioning off, so idle cars stay where they dropped someone off. Riders don't react to prices, and drivers have no preferences.
-- Repositioning is judged on waits alone. Nothing reports the empty kilometers it adds.
+- Repositioning is judged on waits. The report gives the empty kilometers it adds, but nothing weighs them against the time saved.
 - Congestion applies BPR's curve to density, cars on a link against how many fit, where BPR proper uses traffic flow against road capacity. The curve is also steeper than the textbook one: alpha 1 and beta 2 instead of 0.15 and 4, capped at 5x. There's no background traffic, so only the fleet can congest a road, and 180 cars spread over a city rarely do.
 - A rider still waiting when a run stops counts with the time they had waited by then, which understates their wait. Leaving them out would flatter whichever policy strands more riders.
 - Routes are within 3x optimal by construction. In the 100-pair test the worst one took 54% longer than the best path.

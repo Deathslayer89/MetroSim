@@ -6,7 +6,7 @@
 | scenario | `scenarios/downtown.yaml`, 60 min, 180 vehicles, arrival rates times 1x, 1.25x, 1.5x, 1.75x, 2x |
 | seeds | 1 to 10, each run once per policy and demand |
 | command | `go run ./cmd/experiment --osm data/osm/city.osm.pbf --scenario scenarios/downtown.yaml --replicates 10 --parallel 8 --demand 1,1.25,1.5,1.75,2` |
-| commit | `7d415a5` |
+| commit | `e5c6f5f` |
 
 ## Mean wait by demand
 
@@ -14,13 +14,13 @@
 
 | demand | requests per run | arrivals per 3 s window | greedy mean wait (s) | batch mean wait (s) | batch minus greedy (s) | 95% CI | batch lower in |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 1x | 426 | 0.35 | 112.5 | 113.8 | +1.3 | [+1.1, +1.6] | 0 of 10 |
-| 1.25x | 529 | 0.44 | 134.0 | 134.8 | +0.8 | [+0.1, +1.4] | 3 of 10 |
-| 1.5x | 639 | 0.53 | 168.6 | 168.6 | -0.0 | [-2.3, +2.2] | 4 of 10 |
-| 1.75x | 748 | 0.62 | 220.0 | 215.9 | -4.0 | [-7.8, -0.3] | 7 of 10 |
-| 2x | 857 | 0.71 | 358.3 | 258.2 | -98.6 | [-137.4, -59.3] | 9 of 10 |
+| 1x | 426 | 0.35 | 112.4 | 113.8 | +1.4 | [+1.1, +1.7] | 0 of 10 |
+| 1.25x | 529 | 0.44 | 132.9 | 134.0 | +1.1 | [+0.6, +1.6] | 1 of 10 |
+| 1.5x | 639 | 0.53 | 167.6 | 168.4 | +0.8 | [-1.9, +3.4] | 2 of 10 |
+| 1.75x | 748 | 0.62 | 221.7 | 215.3 | -6.2 | [-11.8, -0.6] | 8 of 10 |
+| 2x | 857 | 0.71 | 359.0 | 254.4 | -103.0 | [-157.0, -48.9] | 10 of 10 |
 
-Differences are per seed, paired, with a 95% bootstrap interval across seeds. The sections below have each level in full.
+Differences are per seed, paired, with a 95% t-interval across seeds. The sections below have each level in full.
 
 ## 1x demand
 
@@ -28,8 +28,8 @@ Differences are per seed, paired, with a 95% bootstrap interval across seeds. Th
 
 | policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |
 |---|---:|---:|---:|---:|---:|---:|
-| greedy | 4259 | 4259 (100.0%) | 4239 | 112.5 | 77.4 | 303.2 |
-| batch | 4259 | 4259 (100.0%) | 4238 | 113.8 | 78.7 | 305.1 |
+| greedy | 4259 | 4259 (100.0%) | 4240 | 112.4 | 77.3 | 303.2 |
+| batch | 4259 | 4259 (100.0%) | 4239 | 113.8 | 78.9 | 305.1 |
 
 Waits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.
 
@@ -40,15 +40,15 @@ Waits cover every rider who asked for a ride, including riders still aboard when
 | 1 | 111.6 | 112.7 | +1.1 |
 | 2 | 116.3 | 117.3 | +1.0 |
 | 3 | 123.2 | 124.4 | +1.2 |
-| 4 | 135.6 | 137.2 | +1.6 |
-| 5 | 118.6 | 120.6 | +2.0 |
-| 6 | 100.2 | 102.0 | +1.8 |
-| 7 | 101.5 | 102.3 | +0.8 |
-| 8 | 110.9 | 112.0 | +1.2 |
+| 4 | 135.5 | 137.2 | +1.6 |
+| 5 | 118.8 | 121.0 | +2.2 |
+| 6 | 99.4 | 101.2 | +1.8 |
+| 7 | 101.4 | 102.3 | +0.9 |
+| 8 | 110.5 | 111.7 | +1.2 |
 | 9 | 109.1 | 110.5 | +1.4 |
-| 10 | 99.2 | 100.3 | +1.1 |
+| 10 | 99.3 | 101.0 | +1.8 |
 
-Mean difference, batch minus greedy: +1.3 s, 95% bootstrap CI [+1.1, +1.6] across seeds.
+Mean difference, batch minus greedy: +1.4 s, 95% t-interval [+1.1, +1.7] across seeds.
 
 batch had the lower mean wait in 0 of 10 seeds; two-sided sign test p = 0.00195.
 
@@ -62,8 +62,8 @@ batch had the lower mean wait in 0 of 10 seeds; two-sided sign test p = 0.00195.
 
 | policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |
 |---|---:|---:|---:|---:|---:|---:|
-| greedy | 5288 | 5288 (100.0%) | 5258 | 134.0 | 98.2 | 359.4 |
-| batch | 5288 | 5288 (100.0%) | 5258 | 134.8 | 98.4 | 360.7 |
+| greedy | 5288 | 5288 (100.0%) | 5259 | 132.9 | 98.6 | 356.0 |
+| batch | 5288 | 5288 (100.0%) | 5259 | 134.0 | 99.0 | 350.6 |
 
 Waits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.
 
@@ -71,20 +71,20 @@ Waits cover every rider who asked for a ride, including riders still aboard when
 
 | seed | greedy | batch | difference |
 |---:|---:|---:|---:|
-| 1 | 131.9 | 133.4 | +1.6 |
-| 2 | 132.2 | 132.9 | +0.7 |
-| 3 | 140.3 | 142.9 | +2.5 |
-| 4 | 159.2 | 158.7 | -0.4 |
-| 5 | 131.0 | 132.6 | +1.6 |
-| 6 | 121.0 | 120.9 | -0.1 |
-| 7 | 131.6 | 132.5 | +0.9 |
-| 8 | 138.6 | 140.2 | +1.6 |
-| 9 | 128.3 | 127.0 | -1.3 |
-| 10 | 126.7 | 127.4 | +0.7 |
+| 1 | 131.7 | 133.0 | +1.3 |
+| 2 | 131.6 | 132.9 | +1.4 |
+| 3 | 140.1 | 142.2 | +2.0 |
+| 4 | 158.2 | 158.1 | -0.1 |
+| 5 | 127.3 | 128.8 | +1.5 |
+| 6 | 119.7 | 120.3 | +0.6 |
+| 7 | 129.9 | 131.0 | +1.0 |
+| 8 | 138.3 | 139.9 | +1.6 |
+| 9 | 127.3 | 127.6 | +0.3 |
+| 10 | 125.3 | 126.6 | +1.3 |
 
-Mean difference, batch minus greedy: +0.8 s, 95% bootstrap CI [+0.1, +1.4] across seeds.
+Mean difference, batch minus greedy: +1.1 s, 95% t-interval [+0.6, +1.6] across seeds.
 
-batch had the lower mean wait in 3 of 10 seeds; two-sided sign test p = 0.344.
+batch had the lower mean wait in 1 of 10 seeds; two-sided sign test p = 0.0215.
 
 ### Wait-time CDF, all trips
 
@@ -96,8 +96,8 @@ batch had the lower mean wait in 3 of 10 seeds; two-sided sign test p = 0.344.
 
 | policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |
 |---|---:|---:|---:|---:|---:|---:|
-| greedy | 6387 | 6387 (100.0%) | 6341 | 168.6 | 125.5 | 509.6 |
-| batch | 6387 | 6387 (100.0%) | 6344 | 168.6 | 125.7 | 507.3 |
+| greedy | 6387 | 6387 (100.0%) | 6345 | 167.6 | 125.6 | 499.5 |
+| batch | 6387 | 6387 (100.0%) | 6345 | 168.4 | 126.4 | 501.0 |
 
 Waits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.
 
@@ -105,20 +105,20 @@ Waits cover every rider who asked for a ride, including riders still aboard when
 
 | seed | greedy | batch | difference |
 |---:|---:|---:|---:|
-| 1 | 155.1 | 159.1 | +4.0 |
-| 2 | 148.1 | 146.5 | -1.6 |
-| 3 | 185.9 | 186.7 | +0.8 |
-| 4 | 217.2 | 210.5 | -6.7 |
-| 5 | 170.9 | 166.8 | -4.0 |
-| 6 | 157.5 | 163.7 | +6.2 |
-| 7 | 177.6 | 174.6 | -3.0 |
-| 8 | 160.4 | 160.6 | +0.2 |
-| 9 | 147.2 | 147.9 | +0.6 |
-| 10 | 161.6 | 164.7 | +3.2 |
+| 1 | 155.5 | 157.0 | +1.5 |
+| 2 | 145.3 | 145.5 | +0.3 |
+| 3 | 185.5 | 186.3 | +0.7 |
+| 4 | 218.9 | 211.7 | -7.2 |
+| 5 | 169.3 | 169.9 | +0.6 |
+| 6 | 156.4 | 163.2 | +6.8 |
+| 7 | 176.4 | 177.2 | +0.8 |
+| 8 | 158.4 | 157.1 | -1.4 |
+| 9 | 146.2 | 146.9 | +0.7 |
+| 10 | 160.0 | 165.1 | +5.1 |
 
-Mean difference, batch minus greedy: -0.0 s, 95% bootstrap CI [-2.3, +2.2] across seeds.
+Mean difference, batch minus greedy: +0.8 s, 95% t-interval [-1.9, +3.4] across seeds.
 
-batch had the lower mean wait in 4 of 10 seeds; two-sided sign test p = 0.754.
+batch had the lower mean wait in 2 of 10 seeds; two-sided sign test p = 0.109.
 
 ### Wait-time CDF, all trips
 
@@ -130,8 +130,8 @@ batch had the lower mean wait in 4 of 10 seeds; two-sided sign test p = 0.754.
 
 | policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |
 |---|---:|---:|---:|---:|---:|---:|
-| greedy | 7476 | 7474 (100.0%) | 7405 | 220.0 | 153.7 | 690.3 |
-| batch | 7476 | 7474 (100.0%) | 7415 | 215.9 | 150.9 | 675.4 |
+| greedy | 7476 | 7475 (100.0%) | 7408 | 221.7 | 154.9 | 699.3 |
+| batch | 7476 | 7475 (100.0%) | 7416 | 215.3 | 150.6 | 664.1 |
 
 Waits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.
 
@@ -139,20 +139,20 @@ Waits cover every rider who asked for a ride, including riders still aboard when
 
 | seed | greedy | batch | difference |
 |---:|---:|---:|---:|
-| 1 | 211.7 | 215.4 | +3.6 |
-| 2 | 179.9 | 182.4 | +2.5 |
-| 3 | 257.2 | 244.7 | -12.5 |
-| 4 | 262.3 | 247.5 | -14.7 |
-| 5 | 220.4 | 215.4 | -5.0 |
-| 6 | 233.4 | 230.1 | -3.3 |
-| 7 | 209.8 | 206.6 | -3.2 |
-| 8 | 202.5 | 201.8 | -0.8 |
-| 9 | 179.3 | 182.0 | +2.7 |
-| 10 | 237.1 | 228.0 | -9.1 |
+| 1 | 222.3 | 203.7 | -18.6 |
+| 2 | 174.7 | 174.1 | -0.6 |
+| 3 | 263.3 | 244.3 | -19.0 |
+| 4 | 259.7 | 249.7 | -10.0 |
+| 5 | 217.5 | 215.3 | -2.2 |
+| 6 | 242.9 | 234.1 | -8.8 |
+| 7 | 210.2 | 210.6 | +0.3 |
+| 8 | 201.5 | 197.4 | -4.1 |
+| 9 | 186.6 | 182.8 | -3.8 |
+| 10 | 230.6 | 235.1 | +4.4 |
 
-Mean difference, batch minus greedy: -4.0 s, 95% bootstrap CI [-7.8, -0.3] across seeds.
+Mean difference, batch minus greedy: -6.2 s, 95% t-interval [-11.8, -0.6] across seeds.
 
-batch had the lower mean wait in 7 of 10 seeds; two-sided sign test p = 0.344.
+batch had the lower mean wait in 8 of 10 seeds; two-sided sign test p = 0.109.
 
 ### Wait-time CDF, all trips
 
@@ -164,8 +164,8 @@ batch had the lower mean wait in 7 of 10 seeds; two-sided sign test p = 0.344.
 
 | policy | requested | picked up | completed | mean wait (s) | p50 (s) | p95 (s) |
 |---|---:|---:|---:|---:|---:|---:|
-| greedy | 8570 | 8553 (99.8%) | 8383 | 358.3 | 232.5 | 1100.5 |
-| batch | 8570 | 8563 (99.9%) | 8466 | 258.2 | 171.4 | 800.5 |
+| greedy | 8570 | 8551 (99.8%) | 8381 | 359.0 | 231.4 | 1104.7 |
+| batch | 8570 | 8566 (100.0%) | 8476 | 254.4 | 170.4 | 783.2 |
 
 Waits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.
 
@@ -173,20 +173,20 @@ Waits cover every rider who asked for a ride, including riders still aboard when
 
 | seed | greedy | batch | difference |
 |---:|---:|---:|---:|
-| 1 | 375.3 | 247.0 | -128.3 |
-| 2 | 291.9 | 238.2 | -53.7 |
-| 3 | 449.8 | 289.6 | -160.2 |
-| 4 | 517.5 | 302.1 | -215.3 |
-| 5 | 385.8 | 267.9 | -117.9 |
-| 6 | 331.1 | 244.8 | -86.3 |
-| 7 | 347.1 | 253.4 | -93.7 |
-| 8 | 239.4 | 244.4 | +5.0 |
-| 9 | 241.6 | 239.4 | -2.2 |
-| 10 | 384.7 | 251.6 | -133.1 |
+| 1 | 375.7 | 248.6 | -127.1 |
+| 2 | 269.8 | 245.7 | -24.1 |
+| 3 | 461.6 | 279.9 | -181.7 |
+| 4 | 528.3 | 293.5 | -234.8 |
+| 5 | 389.8 | 260.3 | -129.5 |
+| 6 | 321.2 | 236.6 | -84.6 |
+| 7 | 347.1 | 254.0 | -93.1 |
+| 8 | 249.1 | 243.2 | -5.8 |
+| 9 | 238.3 | 230.1 | -8.2 |
+| 10 | 389.6 | 248.6 | -141.0 |
 
-Mean difference, batch minus greedy: -98.6 s, 95% bootstrap CI [-137.4, -59.3] across seeds.
+Mean difference, batch minus greedy: -103.0 s, 95% t-interval [-157.0, -48.9] across seeds.
 
-batch had the lower mean wait in 9 of 10 seeds; two-sided sign test p = 0.0215.
+batch had the lower mean wait in 10 of 10 seeds; two-sided sign test p = 0.00195.
 
 ### Wait-time CDF, all trips
 

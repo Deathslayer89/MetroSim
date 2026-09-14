@@ -25,9 +25,9 @@ import (
 // a cell that has already been sent.
 const surgePublishEpsilon = 0.05
 
-// replanInterval spaces congestion replans to once a simulated second at 10 Hz,
+// replanEvery spaces congestion replans a simulated second apart at any speed,
 // which keeps A* off the per-tick path.
-const replanInterval = 10
+const replanEvery = time.Second
 
 type SimulationState int32
 
@@ -84,6 +84,7 @@ type Engine struct {
 	// pendingReplan collects edges changed since the last replan pass, so the
 	// ticks between passes don't lose changes.
 	pendingReplan map[int]float64
+	lastReplan    time.Time
 
 	state    atomic.Int32
 	cmds     chan command
@@ -237,12 +238,13 @@ func (e *Engine) Tick() {
 	for id, w := range changedEdges {
 		e.pendingReplan[id] = w
 	}
-	// Replan at most once per vehicle, every replanInterval ticks.
-	if len(e.pendingReplan) > 0 && e.tickCount%replanInterval == 0 {
+	// Replan at most once per vehicle, a simulated second apart.
+	if len(e.pendingReplan) > 0 && (e.lastReplan.IsZero() || e.currentTime.Sub(e.lastReplan) >= replanEvery) {
 		for _, vehicle := range e.vehicles {
 			vehicle.MaybeReplan(e.pendingReplan, allWeights)
 		}
 		e.pendingReplan = make(map[int]float64)
+		e.lastReplan = e.currentTime
 	}
 
 	for _, vehicle := range e.vehicles {

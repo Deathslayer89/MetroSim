@@ -46,13 +46,9 @@ func DemoCongestionParams() CongestionParams {
 	}
 }
 
-// TrafficModel sets travel times from the density on each link, a stretch of
-// road between intersections. OSM splits roads at every node, crossings and
-// bends included, so half its segments are shorter than 11 m and hold less than
-// a car; counted per segment, a car alone on one was a jam. A car isn't held up
-// by itself either, so a link's density leaves one car out. The maps hold
-// occupied links and congested edges only, so per-tick work scales with the
-// fleet rather than the graph.
+// TrafficModel sets travel times from density per link, the road between two
+// intersections, since most OSM segments are too short to hold a car. A link's
+// density leaves one car out: a car isn't held up by itself.
 type TrafficModel struct {
 	graph            *graph.Graph
 	linkOf           map[int]int     // edge ID -> its link
@@ -85,9 +81,8 @@ func NewTrafficModel(g *graph.Graph, params CongestionParams) *TrafficModel {
 	return tm
 }
 
-// buildLinks chains edges joined end to end through nodes where the road
-// neither branches nor merges. Edges go in ID order, so the chains don't depend
-// on map order.
+// buildLinks chains edges through nodes where the road neither branches nor
+// merges, in edge-ID order so the result doesn't depend on map order.
 func buildLinks(g *graph.Graph) (map[int]int, [][]int) {
 	in := make(map[int][]*graph.Edge, len(g.Nodes))
 	ids := make([]int, 0, len(g.Edges))
@@ -97,9 +92,7 @@ func buildLinks(g *graph.Graph) (map[int]int, [][]int) {
 	}
 	sort.Ints(ids)
 
-	// continues returns the edge that carries on from e: the only way out of
-	// e.ToNode other than straight back, when e is the only way in other than
-	// from where that edge leads.
+	// continues returns the one edge carrying on from e, or nil at a junction.
 	continues := func(e *graph.Edge) *graph.Edge {
 		var out *graph.Edge
 		for _, f := range g.Adjacency[e.ToNode] {
@@ -179,10 +172,9 @@ func (tm *TrafficModel) UpdateDensities(vehicles []*agent.Vehicle) {
 	}
 }
 
-// ComputeEdgeWeights recomputes travel times on occupied links and returns the
-// edges whose time has moved more than 10% since it was last reported, which is
-// what triggers replanning. Measuring from the last report rather than the last
-// tick means a jam that grows a little every tick still gets reported.
+// ComputeEdgeWeights recomputes occupied links and returns the edges whose time
+// moved more than 10% since last reported, which triggers replanning. Counting
+// from the last report catches a jam that grows a little every tick.
 func (tm *TrafficModel) ComputeEdgeWeights() map[int]float64 {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()

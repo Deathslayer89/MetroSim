@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/Deathslayer89/MetroSim/internal/agent"
 	"github.com/Deathslayer89/MetroSim/internal/dispatcher"
 	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
@@ -95,7 +96,7 @@ func TestEngineReroutesAroundPileup(t *testing.T) {
 		}
 	}
 
-	for tick := 0; tick <= replanInterval+1; tick++ {
+	for tick := 0; tick <= 11; tick++ { // a simulated second at 10 Hz, and a tick
 		engine.Tick()
 	}
 	for _, e := range car.Route {
@@ -316,5 +317,50 @@ func TestEngineSubscribesToNothing(t *testing.T) {
 	NewEngineWithBus(Config{Graph: loadGrid(t), CongestionParams: traffic.DemoCongestionParams()}, &bus)
 	if len(bus.subs) != 0 {
 		t.Errorf("the engine subscribed to %v", bus.subs)
+	}
+}
+
+// Replans are a simulated second apart at any speed. At 10x a tick is a
+// simulated second, so a jam that forms just after one replan is routed around
+// two ticks later; counted in ticks, it waited ten.
+func TestReplansFollowSimulatedTime(t *testing.T) {
+	g := graph.NewGraph()
+	g.AddNode(&graph.Node{ID: 0, Lat: 37.7700, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 1, Lat: 37.7710, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 2, Lat: 37.7730, Lon: -122.4200})
+	g.AddNode(&graph.Node{ID: 3, Lat: 37.7720, Lon: -122.4210})
+	g.AddNode(&graph.Node{ID: 4, Lat: 37.7800, Lon: -122.4300})
+	g.AddNode(&graph.Node{ID: 5, Lat: 37.7820, Lon: -122.4300})
+	g.AddEdge(&graph.Edge{ID: 0, FromNode: 0, ToNode: 1, Length: 111, SpeedLimit: 13.9, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 1, FromNode: 1, ToNode: 2, Length: 222, SpeedLimit: 11.1, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 2, FromNode: 1, ToNode: 3, Length: 260, SpeedLimit: 20, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 3, FromNode: 3, ToNode: 2, Length: 260, SpeedLimit: 20, Lanes: 1})
+	g.AddEdge(&graph.Edge{ID: 4, FromNode: 4, ToNode: 5, Length: 222, SpeedLimit: 11.1, Lanes: 1})
+	engine := NewEngine(Config{Graph: g, CongestionParams: traffic.DemoCongestionParams(), TickRate: 10, SpeedMultiplier: 10})
+	spawn := func(n, from, to int) *agent.Vehicle {
+		var v *agent.Vehicle
+		for i := 0; i < n; i++ {
+			v = engine.SpawnVehicle(from)
+			v.SetDestination(to)
+			if err := v.PlanRoute(); err != nil {
+				t.Fatalf("plan route: %v", err)
+			}
+		}
+		return v
+	}
+	// A jam elsewhere sets off a replan on the second tick.
+	spawn(20, 4, 5)
+	car := spawn(1, 0, 2)
+	engine.Tick()
+	engine.Tick()
+	// These cars join edge 1 -> 2 on the next tick and count from the one
+	// after, two simulated seconds past that replan.
+	spawn(100, 1, 2)
+	engine.Tick()
+	engine.Tick()
+	for _, e := range car.Route {
+		if e.ID == 1 {
+			t.Fatal("car still routes over the jammed edge 1->2")
+		}
 	}
 }

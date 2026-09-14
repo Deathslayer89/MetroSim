@@ -76,7 +76,7 @@ func main() {
 	outDir := flag.String("out", "experiments", "output directory root")
 	traceDir := flag.String("trace-dir", "", "if set, write per-run Parquet traces under this directory")
 	driverAcceptRate := flag.Float64("driver-accept-rate", 0, "P(driver accepts), 0 disables (always accept)")
-	driverCancelRate := flag.Float64("driver-cancel-rate", 0, "per-tick P(driver cancels before pickup), 0 disables")
+	driverCancelRate := flag.Float64("driver-cancel-rate", 0, "cancellations per minute a driver spends heading to a pickup; 0 disables")
 	etaModelPath := flag.String("eta-model", "", "trained ETA model (cmd/train-eta); fills eta_predicted_s in traces")
 	flag.Parse()
 

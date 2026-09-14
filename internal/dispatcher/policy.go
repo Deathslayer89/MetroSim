@@ -40,7 +40,6 @@ type Assignment struct {
 // Policy decides which idle drivers take which pending requests. Match is never
 // called concurrently.
 type Policy interface {
-	Name() string
 	Match(ctx MatchCtx) []Assignment
 }
 
@@ -84,12 +83,23 @@ func edgeTime(ctx MatchCtx, e *graph.Edge) float64 {
 	return e.BaseWeight
 }
 
+// candidates returns up to k drivers nearest to (lat, lon), leaving out any
+// who turned req down.
+func candidates(ctx MatchCtx, req *Request, lat, lon float64, k int) []*DriverLocation {
+	near := ctx.DriverIndex.NearestK(lat, lon, k+len(req.declinedBy))
+	out := near[:0]
+	for _, c := range near {
+		if !req.declinedBy[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out[:min(k, len(out))]
+}
+
 // GreedyPolicy takes requests in arrival order and gives each whichever of its
 // nearest free drivers can reach it soonest by road. That's the cost batch
 // minimizes too, so the two policies differ only in batching.
 type GreedyPolicy struct{}
-
-func (GreedyPolicy) Name() string { return "greedy" }
 
 func (GreedyPolicy) Match(ctx MatchCtx) []Assignment {
 	if len(ctx.Pending) == 0 {
@@ -105,7 +115,7 @@ func (GreedyPolicy) Match(ctx MatchCtx) []Assignment {
 			continue
 		}
 		best, bestCost := -1, math.Inf(1)
-		for _, c := range ctx.DriverIndex.NearestK(pickup.Lat, pickup.Lon, greedyCandidates) {
+		for _, c := range candidates(ctx, req, pickup.Lat, pickup.Lon, greedyCandidates) {
 			driver, ok := ctx.Vehicles[c.ID]
 			if !ok || !driver.IsAvailable() {
 				continue
@@ -123,11 +133,9 @@ func (GreedyPolicy) Match(ctx MatchCtx) []Assignment {
 	return out
 }
 
-// BatchPolicy collects requests for Window, then solves one assignment over
-// every pending request and its nearest CandidatesPerRequest drivers,
-// minimizing total pickup ETA. SurgePremiumSeconds discounts high-surge pickups
-// and ETAWeight penalizes long predicted trips; both default to 0. Match
-// updates lastFire, so each Dispatcher needs its own BatchPolicy.
+// BatchPolicy holds requests for Window, then assigns them all at once to
+// their nearest CandidatesPerRequest drivers, minimizing total pickup time.
+// Match updates lastFire, so each Dispatcher needs its own BatchPolicy.
 type BatchPolicy struct {
 	Window               time.Duration
 	CandidatesPerRequest int
@@ -139,8 +147,6 @@ type BatchPolicy struct {
 func NewBatchPolicy(window time.Duration) *BatchPolicy {
 	return &BatchPolicy{Window: window, CandidatesPerRequest: 5}
 }
-
-func (b *BatchPolicy) Name() string { return "batch" }
 
 func (b *BatchPolicy) Match(ctx MatchCtx) []Assignment {
 	if !b.lastFire.IsZero() && ctx.Now.Sub(b.lastFire) < b.Window {
@@ -169,7 +175,7 @@ func matchBatch(ctx MatchCtx, pending []*Request, candidatesPerRequest int, surg
 		if k <= 0 {
 			k = 5
 		}
-		nearest := ctx.DriverIndex.NearestK(pickup.Lat, pickup.Lon, k)
+		nearest := candidates(ctx, req, pickup.Lat, pickup.Lon, k)
 		ids := make([]int, 0, len(nearest))
 		for _, n := range nearest {
 			if v, ok := ctx.Vehicles[n.ID]; ok && v.IsAvailable() {

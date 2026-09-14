@@ -7,10 +7,9 @@ import (
 	"github.com/uber/h3-go/v4"
 )
 
-// RegionShardedBatchPolicy groups pending requests by pickup H3 cell and runs a
-// separate Hungarian solve per region, so k regions cost about 1/k^2 of one big
-// solve. Regions run in sorted order and remove the drivers they assign from
-// the shared index, so a driver near a boundary can't be claimed twice.
+// RegionShardedBatchPolicy runs a separate solve per pickup H3 region, about
+// 1/k^2 the cost of one solve over k regions. Regions go in sorted order and
+// remove the drivers they assign, so no boundary driver is claimed twice.
 type RegionShardedBatchPolicy struct {
 	Window               time.Duration
 	CandidatesPerRequest int
@@ -24,8 +23,6 @@ type RegionShardedBatchPolicy struct {
 func NewRegionShardedBatchPolicy(window time.Duration) *RegionShardedBatchPolicy {
 	return &RegionShardedBatchPolicy{Window: window, CandidatesPerRequest: 5, Resolution: 5}
 }
-
-func (p *RegionShardedBatchPolicy) Name() string { return "region-sharded-batch" }
 
 func (p *RegionShardedBatchPolicy) Match(ctx MatchCtx) []Assignment {
 	if !p.lastFire.IsZero() && ctx.Now.Sub(p.lastFire) < p.Window {

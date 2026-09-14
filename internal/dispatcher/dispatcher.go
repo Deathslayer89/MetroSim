@@ -33,7 +33,16 @@ type Request struct {
 	RequestTime     time.Time
 	AssignedDriver  int
 	AssignmentTime  time.Time
-	routeChecked    bool // dropUnroutable found a route from pickup to dropoff
+	routeChecked    bool         // dropUnroutable found a route from pickup to dropoff
+	declinedBy      map[int]bool // drivers who turned it down, so it isn't offered to them again
+}
+
+// decline records that a driver turned the request down.
+func (r *Request) decline(driverID int) {
+	if r.declinedBy == nil {
+		r.declinedBy = make(map[int]bool)
+	}
+	r.declinedBy[driverID] = true
 }
 
 type Ride struct {
@@ -89,6 +98,7 @@ type Dispatcher struct {
 	behaviorRNG    *rand.Rand
 	declines       int
 	cancellations  int
+	lastTick       time.Time // when the previous Tick ran, for the time a cancel chance covers
 
 	maxWait   time.Duration // a request unmatched this long is abandoned; 0 disables
 	abandoned int
@@ -248,7 +258,12 @@ func (d *Dispatcher) Tick(vehicles map[int]*agent.Vehicle, currentTime time.Time
 	// Publish after unlocking: a MemoryBus subscriber runs on this goroutine
 	// and would deadlock if it called back into the dispatcher.
 	abandonedEvents := append(d.expireStale(currentTime), d.dropUnroutable(currentTime)...)
-	cancelledEvents, pickupEvents, completedEvents := d.updateActiveRides(vehicles, currentTime, edgeWeights)
+	var sinceLast time.Duration
+	if !d.lastTick.IsZero() {
+		sinceLast = currentTime.Sub(d.lastTick)
+	}
+	d.lastTick = currentTime
+	cancelledEvents, pickupEvents, completedEvents := d.updateActiveRides(vehicles, currentTime, sinceLast, edgeWeights)
 	matchedEvents := d.runMatching(vehicles, currentTime, edgeWeights)
 	d.repositionIdle(vehicles, currentTime, edgeWeights)
 	d.mu.Unlock()
@@ -372,8 +387,10 @@ func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime ti
 		if !ok || !driver.IsAvailable() || busy[a.DriverID] {
 			continue
 		}
-		// A declined request stays queued and the driver stays available.
+		// A declined request stays queued for other drivers, and the driver
+		// stays available.
 		if !d.accepts() {
+			a.Request.decline(a.DriverID)
 			continue
 		}
 		driver.SetDestination(a.Request.PickupNode)
@@ -427,8 +444,8 @@ func (d *Dispatcher) runMatching(vehicles map[int]*agent.Vehicle, currentTime ti
 }
 
 // updateActiveRides advances each ride and returns the events to publish once
-// d.mu is released.
-func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentTime time.Time, edgeWeights map[int]float64) ([]*eventspb.TripCancelled, []*eventspb.TripPickedUp, []*eventspb.TripCompleted) {
+// d.mu is released. sinceLast is the simulated time since the previous tick.
+func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentTime time.Time, sinceLast time.Duration, edgeWeights map[int]float64) ([]*eventspb.TripCancelled, []*eventspb.TripPickedUp, []*eventspb.TripCompleted) {
 	var cancels []*eventspb.TripCancelled
 	var pickups []*eventspb.TripPickedUp
 	var completes []*eventspb.TripCompleted
@@ -444,10 +461,12 @@ func (d *Dispatcher) updateActiveRides(vehicles map[int]*agent.Vehicle, currentT
 
 		switch ride.State {
 		case RideStateAssigned:
-			// A cancelling driver is freed where it is; the request is requeued.
-			if d.cancels() {
+			// A cancelling driver is freed where it is. The request is requeued,
+			// and not offered to that driver again.
+			if d.cancels(sinceLast) {
 				driver.Abort()
 				ride.Request.AssignedDriver = 0
+				ride.Request.decline(driver.ID)
 				d.pendingQueue = append(d.pendingQueue, ride.Request)
 				delete(d.activeRides, rideID)
 				meta := d.stamper.MetaFor(currentTime)

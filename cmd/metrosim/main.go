@@ -41,7 +41,7 @@ func main() {
 	kafkaSeeds := flag.String("kafka-seeds", "localhost:9092", "comma-separated Kafka bootstrap brokers (only with --bus=kafka)")
 	etaModelPath := flag.String("eta-model", "", "path to a trained ETA model (from cmd/train-eta); empty disables prediction")
 	driverAcceptRate := flag.Float64("driver-accept-rate", 0, "P(driver accepts an assignment), 0 disables (always accept)")
-	driverCancelRate := flag.Float64("driver-cancel-rate", 0, "per-tick P(driver cancels before pickup), 0 disables")
+	driverCancelRate := flag.Float64("driver-cancel-rate", 0, "cancellations per minute a driver spends heading to a pickup; 0 disables")
 	speed := flag.Float64("speed", 1.0, "initial sim-speed multiplier (also adjustable live in the UI)")
 	maxWait := flag.Duration("max-wait", 0, "abandon a request unmatched this long (rider gives up); 0 disables")
 	repositionAfter := flag.Duration("reposition-after", 0, "send cars idle this long toward recent demand; 0 disables")
@@ -155,7 +155,7 @@ func main() {
 			AcceptRate: *driverAcceptRate,
 			CancelRate: *driverCancelRate,
 		}, seed)
-		log.Printf("driver behavior: accept=%.2f cancel=%.3f", *driverAcceptRate, *driverCancelRate)
+		log.Printf("driver behavior: accept=%.2f, cancel=%.2f a minute", *driverAcceptRate, *driverCancelRate)
 	}
 
 	engine.EnableSurge()

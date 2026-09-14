@@ -1,7 +1,9 @@
 package dispatcher
 
 import (
+	"math"
 	"math/rand"
+	"time"
 )
 
 // DriverBehavior models supply-side friction: declines and pre-pickup
@@ -9,13 +11,19 @@ import (
 // opt-in. Randomness uses the dispatcher's seeded RNG.
 type DriverBehavior struct {
 	AcceptRate float64 // P(accept) in (0,1); <=0 or >=1 means always accept
-	CancelRate float64 // per-tick P(cancel) while en route to pickup
+	CancelRate float64 // cancellations per minute spent heading to a pickup
 }
 
 // active reports whether any friction is configured, so the hot path can skip
 // the RNG entirely. AcceptRate is a friction only in (0,1).
 func (b DriverBehavior) active() bool {
 	return (b.AcceptRate > 0 && b.AcceptRate < 1.0) || b.CancelRate > 0
+}
+
+// cancelChance is the chance a driver heading to a pickup cancels within dt,
+// from a rate over simulated time, so --speed doesn't change it.
+func (b DriverBehavior) cancelChance(dt time.Duration) float64 {
+	return 1 - math.Exp(-b.CancelRate*dt.Minutes())
 }
 
 // behaviorSeedSalt keeps the behavior stream apart from the arrival stream,
@@ -44,12 +52,13 @@ func (d *Dispatcher) accepts() bool {
 	return true
 }
 
-// cancels decides whether an en-route driver bails this tick. Caller holds d.mu.
-func (d *Dispatcher) cancels() bool {
-	if d.driverBehavior.CancelRate <= 0 || d.behaviorRNG == nil {
+// cancels decides whether an en-route driver bails in the dt since the last
+// tick. Caller holds d.mu.
+func (d *Dispatcher) cancels(dt time.Duration) bool {
+	if d.driverBehavior.CancelRate <= 0 || d.behaviorRNG == nil || dt <= 0 {
 		return false
 	}
-	if d.behaviorRNG.Float64() < d.driverBehavior.CancelRate {
+	if d.behaviorRNG.Float64() < d.driverBehavior.cancelChance(dt) {
 		d.cancellations++
 		return true
 	}

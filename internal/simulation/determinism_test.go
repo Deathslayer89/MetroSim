@@ -76,7 +76,7 @@ func runWaits(t *testing.T, seed int64) []float64 {
 	}
 	d := engine.GetDispatcher()
 	d.SetPolicy(dispatcher.NewBatchPolicy(3 * time.Second))
-	d.SetDriverBehavior(dispatcher.DriverBehavior{CancelRate: 0.02}, seed)
+	d.SetDriverBehavior(dispatcher.DriverBehavior{CancelRate: 12}, seed)
 	d.SetRepositioning(dispatcher.DefaultRepositioning(10 * time.Second))
 	engine.SetStartTime(sc.StartTime)
 

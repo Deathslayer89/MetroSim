@@ -40,7 +40,7 @@ func TestCountersMatchDispatcher(t *testing.T) {
 	})
 	d := engine.GetDispatcher()
 	d.SetMaxWait(20 * time.Second)
-	d.SetDriverBehavior(dispatcher.DriverBehavior{CancelRate: 0.002}, sc.Seed)
+	d.SetDriverBehavior(dispatcher.DriverBehavior{CancelRate: 1.2}, sc.Seed)
 	engine.SetStartTime(sc.StartTime)
 
 	state := NewState()

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +40,9 @@ type runResult struct {
 	requested int
 	completed int
 	moves     int // repositioning moves
+
+	drivenKm     float64 // by the whole fleet
+	repositionKm float64 // of that, driven repositioning
 }
 
 type policySummary struct {
@@ -268,11 +270,9 @@ func gitCommit() string {
 	return rev
 }
 
-// runHeadless runs one policy on one seed. After the scenario ends it keeps
-// ticking for up to half its duration so trips in progress can finish. A rider
-// still aboard then counts with the wait they had. A rider still waiting counts
-// with the time they had waited so far, which understates their wait but keeps
-// a policy that strands riders from looking faster than one that serves them.
+// runHeadless runs one policy on one seed, then keeps ticking for up to half
+// the scenario's length so trips in progress can finish. A rider never picked
+// up counts with the time they had waited by then.
 func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWindow, repositionAfter time.Duration, seed int64, traceDir string, behavior dispatcher.DriverBehavior, etaModel *eta.Model) (runResult, error) {
 	const tickRate = 10.0
 	const tickDt = time.Second / tickRate
@@ -361,7 +361,12 @@ func runHeadless(g *graph.Graph, sc *scenario.Scenario, polName string, batchWin
 	for _, req := range waiting {
 		waits = append(waits, end.Sub(req.RequestTime).Seconds())
 	}
-	return runResult{seed: seed, waits: waits, pickedUp: pickedUp, requested: gen.RequestCount(), completed: len(completed), moves: d.RepositionCount()}, nil
+	res := runResult{seed: seed, waits: waits, pickedUp: pickedUp, requested: gen.RequestCount(), completed: len(completed), moves: d.RepositionCount()}
+	for _, v := range engine.GetVehicles() {
+		res.drivenKm += v.DrivenMeters / 1000
+		res.repositionKm += v.RepositionMeters / 1000
+	}
+	return res, nil
 }
 
 func writeWaitsCSV(path string, levels []*level) error {
@@ -467,12 +472,12 @@ func writeSummary(f *os.File, levels []*level, window time.Duration) {
 		}
 		for _, alt := range lv.pols[1:] {
 			diffs, wins, ties := seedDiffs(lv.pols[0], alt)
-			lo, hi := bootstrapCI(diffs)
+			lo, hi := stats.TInterval95(diffs)
 			row += fmt.Sprintf(" %+.1f | [%+.1f, %+.1f] | %d of %d |", stats.Mean(diffs), lo, hi, wins, len(diffs)-ties)
 		}
 		fmt.Fprintln(f, row)
 	}
-	fmt.Fprintln(f, "\nDifferences are per seed, paired, with a 95% bootstrap interval across seeds. The sections below have each level in full.")
+	fmt.Fprintln(f, "\nDifferences are per seed, paired, with a 95% t-interval across seeds. The sections below have each level in full.")
 }
 
 // writeLevel reports one demand level: every trip per policy, then each other
@@ -494,11 +499,16 @@ func writeLevel(f *os.File, lv *level, h, cdf string) {
 	fmt.Fprintln(f, "\nWaits cover every rider who asked for a ride, including riders still aboard when the run stopped. A rider never picked up counts with the time they had waited by then, which understates their wait.")
 	for _, s := range lv.pols {
 		var moves int
+		var driven, empty float64
 		for _, r := range s.runs {
 			moves += r.moves
+			driven += r.drivenKm
+			empty += r.repositionKm
 		}
 		if moves > 0 {
-			fmt.Fprintf(f, "\n%s made %d repositioning moves, %.0f per run.\n", s.name, moves, float64(moves)/float64(len(s.runs)))
+			runs := float64(len(s.runs))
+			fmt.Fprintf(f, "\n%s made %d repositioning moves, %.0f per run, and drove %.0f km per run repositioning, %.1f%% of all its driving.\n",
+				s.name, moves, float64(moves)/runs, empty/runs, 100*empty/driven)
 		}
 	}
 
@@ -527,8 +537,8 @@ func writePaired(f *os.File, h string, base, alt *policySummary) {
 		fmt.Fprintln(f, "\nNo seed had riders under both policies.")
 		return
 	}
-	lo, hi := bootstrapCI(diffs)
-	fmt.Fprintf(f, "\nMean difference, %s minus %s: %+.1f s, 95%% bootstrap CI [%+.1f, %+.1f] across seeds.\n\n",
+	lo, hi := stats.TInterval95(diffs)
+	fmt.Fprintf(f, "\nMean difference, %s minus %s: %+.1f s, 95%% t-interval [%+.1f, %+.1f] across seeds.\n\n",
 		alt.name, base.name, stats.Mean(diffs), lo, hi)
 	fmt.Fprintf(f, "%s had the lower mean wait in %d of %d seeds; two-sided sign test p = %.3g.\n",
 		alt.name, wins, len(diffs)-ties, stats.SignTest(wins, len(diffs)-ties))
@@ -555,10 +565,6 @@ func seedDiffs(base, alt *policySummary) (diffs []float64, wins, ties int) {
 		}
 	}
 	return diffs, wins, ties
-}
-
-func bootstrapCI(diffs []float64) (lo, hi float64) {
-	return stats.BootstrapMeanCI(diffs, 10000, rand.New(rand.NewSource(1)))
 }
 
 func percent(a, b int) float64 {

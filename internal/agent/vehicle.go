@@ -41,6 +41,11 @@ type Vehicle struct {
 	State       VehicleState
 	Destination int
 
+	// DrivenMeters is the distance covered, and RepositionMeters the part of it
+	// driven repositioning, with no rider.
+	DrivenMeters     float64
+	RepositionMeters float64
+
 	graph       *graph.Graph
 	pathPlanner *pathfinding.PathPlanner
 }
@@ -159,11 +164,13 @@ func (v *Vehicle) MoveWithWeights(deltaTime float64, weights map[int]float64) {
 		}
 		timeLeftOnEdge := (1.0 - v.Progress) * edgeTime
 		if remaining < timeLeftOnEdge {
+			v.drive(remaining / edgeTime)
 			v.Progress += remaining / edgeTime
 			return
 		}
 
 		remaining -= timeLeftOnEdge
+		v.drive(1 - v.Progress)
 		v.CurrentNode = v.CurrentEdge.ToNode
 		v.Progress = 0.0
 		v.RouteIndex++
@@ -182,6 +189,15 @@ func (v *Vehicle) MoveWithWeights(deltaTime float64, weights map[int]float64) {
 			v.State = StateIdle
 			return
 		}
+	}
+}
+
+// drive adds fraction of the current edge to the odometers.
+func (v *Vehicle) drive(fraction float64) {
+	m := fraction * v.CurrentEdge.Length
+	v.DrivenMeters += m
+	if v.State == StateRepositioning {
+		v.RepositionMeters += m
 	}
 }
 

@@ -117,8 +117,6 @@ func NewEngineWithBus(cfg Config, bus events.Bus) *Engine {
 	pathPlanner := pathfinding.NewPathPlanner(cfg.Graph, nil)
 	metricsCollector := metrics.NewMetricsCollector()
 	stamper := events.NewStamper(events.RunInfo{})
-	// The collector backs GetMetricsCollector; Prometheus subscribes from cmd.
-	metricsCollector.SubscribeToBus(bus)
 	out := &outbox{Bus: bus}
 	dispatcher := dispatcher.NewDispatcher(cfg.Graph, pathPlanner, out, stamper)
 

@@ -99,7 +99,10 @@ type Server struct {
 	cancel     context.CancelFunc
 }
 
+// NewServer serves engine and feeds the engine's metrics collector, which the
+// dashboard's ride stats come from, from its bus.
 func NewServer(engine *simulation.Engine) *Server {
+	engine.GetMetricsCollector().SubscribeToBus(engine.Bus())
 	return &Server{engine: engine, hub: wshub.New(droppedFrames)}
 }
 

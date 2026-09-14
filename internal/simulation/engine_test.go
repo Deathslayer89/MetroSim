@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/Deathslayer89/MetroSim/internal/dispatcher"
 	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
@@ -286,5 +288,33 @@ func TestTripSubscribersCanReadTheEngine(t *testing.T) {
 	case <-matched:
 	default:
 		t.Error("no TripMatched was published")
+	}
+}
+
+// subscriptionRecorder is a bus that notes each subscription and delivers nothing.
+type subscriptionRecorder struct{ subs []string }
+
+func (b *subscriptionRecorder) Publish(string, proto.Message) error { return nil }
+func (b *subscriptionRecorder) Subscribe(topic, group string, _ func(proto.Message)) error {
+	b.subs = append(b.subs, topic+" in "+group)
+	return nil
+}
+func (b *subscriptionRecorder) SubscribeBatched(topic, group string, _ func(proto.Message), _ func() error) error {
+	b.subs = append(b.subs, topic+" in "+group)
+	return nil
+}
+func (b *subscriptionRecorder) SubscribeFromNow(topic string, _ func(proto.Message)) error {
+	b.subs = append(b.subs, topic)
+	return nil
+}
+
+// On Kafka a subscription joins a consumer group and reads the topic's history,
+// so the engine subscribes to nothing itself. The in-process server feeds the
+// metrics collector it reads.
+func TestEngineSubscribesToNothing(t *testing.T) {
+	var bus subscriptionRecorder
+	NewEngineWithBus(Config{Graph: loadGrid(t), CongestionParams: traffic.DemoCongestionParams()}, &bus)
+	if len(bus.subs) != 0 {
+		t.Errorf("the engine subscribed to %v", bus.subs)
 	}
 }

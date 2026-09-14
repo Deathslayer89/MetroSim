@@ -1,12 +1,14 @@
 package liveview
 
 import (
+	"slices"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Deathslayer89/MetroSim/internal/dispatcher"
+	"github.com/Deathslayer89/MetroSim/internal/events"
 	"github.com/Deathslayer89/MetroSim/internal/graph"
 	"github.com/Deathslayer89/MetroSim/internal/scenario"
 	"github.com/Deathslayer89/MetroSim/internal/simulation"
@@ -73,7 +75,7 @@ func TestCountersMatchDispatcher(t *testing.T) {
 	}
 }
 
-type groupRecorder struct{ groups []string }
+type groupRecorder struct{ groups, fromNow []string }
 
 func (g *groupRecorder) Publish(string, proto.Message) error { return nil }
 func (g *groupRecorder) Subscribe(_, group string, _ func(proto.Message)) error {
@@ -82,6 +84,10 @@ func (g *groupRecorder) Subscribe(_, group string, _ func(proto.Message)) error 
 }
 func (g *groupRecorder) SubscribeBatched(_, group string, _ func(proto.Message), _ func() error) error {
 	g.groups = append(g.groups, group)
+	return nil
+}
+func (g *groupRecorder) SubscribeFromNow(topic string, _ func(proto.Message)) error {
+	g.fromNow = append(g.fromNow, topic)
 	return nil
 }
 
@@ -99,5 +105,18 @@ func TestLiveViewSubscribesWithoutAGroup(t *testing.T) {
 		if g != "" {
 			t.Errorf("subscribed with group %q; a restart would resume mid-stream with empty counts", g)
 		}
+	}
+}
+
+// Every tick republishes every driver's position, so live-view starts that
+// topic at the newest record; replaying it would take longer than the rest of
+// the log put together.
+func TestLiveViewSkipsOldDriverPositions(t *testing.T) {
+	var rec groupRecorder
+	if err := NewState().SubscribeToBus(&rec); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(rec.fromNow, events.TopicDriverLocationUpdate) {
+		t.Errorf("driver positions are read from the start of the log; from now: %v", rec.fromNow)
 	}
 }

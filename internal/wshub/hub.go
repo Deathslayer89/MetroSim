@@ -16,42 +16,40 @@ import (
 // The zero Upgrader rejects cross-origin requests.
 var upgrader websocket.Upgrader
 
-// Hub tracks connected clients. T is per-client state fixed at connect time,
-// such as a viewport filter.
-type Hub[T any] struct {
+// Hub tracks connected clients.
+type Hub struct {
 	dropped   prometheus.Counter
 	writeWait time.Duration // limit on each write
 	pongWait  time.Duration // a client silent this long, pongs included, is dropped
 	mu        sync.RWMutex
-	clients   map[*client[T]]struct{}
+	clients   map[*client]struct{}
 }
 
-type client[T any] struct {
-	conn  *websocket.Conn
-	send  chan []byte // holds the one pending frame
-	done  chan struct{}
-	state T
+type client struct {
+	conn *websocket.Conn
+	send chan []byte // holds the one pending frame
+	done chan struct{}
 }
 
 // New returns a hub that counts dropped and replaced frames in dropped.
-func New[T any](dropped prometheus.Counter) *Hub[T] {
-	return &Hub[T]{
+func New(dropped prometheus.Counter) *Hub {
+	return &Hub{
 		dropped:   dropped,
 		writeWait: 10 * time.Second,
 		pongWait:  60 * time.Second,
-		clients:   make(map[*client[T]]struct{}),
+		clients:   make(map[*client]struct{}),
 	}
 }
 
 // Serve upgrades the request and blocks until the client disconnects. A non-nil
 // first frame goes out before any broadcast, and onMessage, if set, receives
 // every message the client sends.
-func (h *Hub[T]) Serve(w http.ResponseWriter, r *http.Request, state T, first []byte, onMessage func([]byte)) error {
+func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, first []byte, onMessage func([]byte)) error {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return err
 	}
-	c := &client[T]{conn: conn, send: make(chan []byte, 1), done: make(chan struct{}), state: state}
+	c := &client{conn: conn, send: make(chan []byte, 1), done: make(chan struct{})}
 	h.add(c)
 	defer h.remove(c)
 	// Written here, before the writer starts, so no broadcast can replace it.
@@ -67,18 +65,14 @@ func (h *Hub[T]) Serve(w http.ResponseWriter, r *http.Request, state T, first []
 	return nil
 }
 
-// Broadcast queues payload(state) for every client, skipping nil payloads. A
-// frame the client hasn't taken yet is replaced by the new one.
-func (h *Hub[T]) Broadcast(payload func(state T) []byte) {
+// Broadcast queues frame for every client. A frame a client hasn't taken yet
+// is replaced by the new one.
+func (h *Hub) Broadcast(frame []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.clients {
-		p := payload(c.state)
-		if p == nil {
-			continue
-		}
 		select {
-		case c.send <- p:
+		case c.send <- frame:
 			continue
 		default:
 		}
@@ -88,20 +82,20 @@ func (h *Hub[T]) Broadcast(payload func(state T) []byte) {
 		default:
 		}
 		select {
-		case c.send <- p:
+		case c.send <- frame:
 		default:
 			h.dropped.Inc()
 		}
 	}
 }
 
-func (h *Hub[T]) add(c *client[T]) {
+func (h *Hub) add(c *client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.clients[c] = struct{}{}
 }
 
-func (h *Hub[T]) remove(c *client[T]) {
+func (h *Hub) remove(c *client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, ok := h.clients[c]; ok {
@@ -112,7 +106,7 @@ func (h *Hub[T]) remove(c *client[T]) {
 
 // read returns once the client disconnects or goes quiet for pongWait; a
 // browser answers every ping, which pushes the deadline back.
-func (h *Hub[T]) read(c *client[T], onMessage func([]byte)) {
+func (h *Hub) read(c *client, onMessage func([]byte)) {
 	defer c.conn.Close()
 	c.conn.SetReadLimit(8192)
 	c.conn.SetReadDeadline(time.Now().Add(h.pongWait))
@@ -132,7 +126,7 @@ func (h *Hub[T]) read(c *client[T], onMessage func([]byte)) {
 
 // write sends frames and pings until the client leaves or a write times out;
 // closing the connection then ends read too.
-func (h *Hub[T]) write(c *client[T]) {
+func (h *Hub) write(c *client) {
 	ping := time.NewTicker(h.pongWait * 9 / 10)
 	defer ping.Stop()
 	defer c.conn.Close()

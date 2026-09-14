@@ -118,6 +118,11 @@ func SubscribeDriverLocationUpdate(bus Bus, group string, fn func(*eventspb.Driv
 		fn(m.(*eventspb.DriverLocationUpdate))
 	})
 }
+func SubscribeDriverLocationUpdateFromNow(bus Bus, fn func(*eventspb.DriverLocationUpdate)) error {
+	return bus.SubscribeFromNow(TopicDriverLocationUpdate, func(m proto.Message) {
+		fn(m.(*eventspb.DriverLocationUpdate))
+	})
+}
 
 func PublishSurgeUpdated(bus Bus, msg *eventspb.SurgeUpdated) error {
 	return bus.Publish(TopicSurgeUpdated, msg)

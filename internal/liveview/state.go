@@ -27,10 +27,8 @@ type SurgeCell struct {
 	Multiplier float64     `json:"multiplier"`
 }
 
-// Counters tracks rolling totals derived from trip lifecycle events. A
-// cancelled ride's request goes back in the queue and an abandoned one leaves
-// it, so Pending and Active, derived from the rest, match the dispatcher's own
-// counts once every topic has been read to the same point.
+// Counters holds totals from trip events. Pending and Active are derived from
+// the rest and match the dispatcher once every topic is read to the same point.
 type Counters struct {
 	Requested int `json:"requested"`
 	Matched   int `json:"matched"`
@@ -64,10 +62,9 @@ func NewState() *State {
 	}
 }
 
-// SubscribeToBus wires this State to the bus: driver locations, surge updates,
-// and every trip lifecycle topic. It joins no consumer group, so every start
-// reads each topic from the beginning. The counts then cover the whole run after
-// a restart, and each live-view replica sees the whole fleet.
+// SubscribeToBus reads the trip and surge topics from the start, in no group,
+// so counts survive a restart and every replica sees the whole fleet. Driver
+// positions start at the newest record, since every tick resends them.
 func (s *State) SubscribeToBus(bus events.Bus) error {
 	const group = ""
 	c := &s.counters
@@ -76,7 +73,7 @@ func (s *State) SubscribeToBus(bus events.Bus) error {
 		*n++
 		s.mu.Unlock()
 	}
-	if err := events.SubscribeDriverLocationUpdate(bus, group, s.onDriverLocation); err != nil {
+	if err := events.SubscribeDriverLocationUpdateFromNow(bus, s.onDriverLocation); err != nil {
 		return err
 	}
 	if err := events.SubscribeSurgeUpdated(bus, group, s.onSurge); err != nil {

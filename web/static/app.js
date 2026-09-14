@@ -235,7 +235,7 @@ function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
 
-    showConnectionStatus('Connecting...', false);
+    showConnectionStatus('Connecting', false);
     ws = new WebSocket(wsUrl);
 
     ws.onopen = function() {
@@ -254,7 +254,7 @@ function connectWebSocket() {
 
     ws.onclose = function() {
         if (stopped) return;
-        showConnectionStatus('Disconnected, reconnecting...', false);
+        showConnectionStatus('Disconnected, reconnecting', false);
         setTimeout(connectWebSocket, 2000);
     };
 }

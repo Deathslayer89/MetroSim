@@ -20,18 +20,15 @@ const (
 	TopicSurgeUpdated         = "surge.updated"
 )
 
-// Bus is the pub/sub contract. group is the Kafka consumer group; MemoryBus
-// ignores it and delivers to every subscriber. An empty group joins none: the
-// subscriber reads every partition from the start and commits nothing, which a
-// view that keeps its state in memory needs to rebuild it after a restart.
-//
-// SubscribeBatched calls onBatchEnd after each fetched batch has gone through
-// onRecord. Offsets commit only when it returns nil; an error means the batch
-// is redelivered.
+// Bus is the pub/sub contract. group is the Kafka consumer group, which
+// MemoryBus ignores; an empty group joins none and reads every partition from
+// the start. SubscribeBatched commits a batch only once onBatchEnd returns nil.
+// SubscribeFromNow joins no group and starts at the newest record.
 type Bus interface {
 	Publish(topic string, msg proto.Message) error
 	Subscribe(topic, group string, handler func(proto.Message)) error
 	SubscribeBatched(topic, group string, onRecord func(proto.Message), onBatchEnd func() error) error
+	SubscribeFromNow(topic string, handler func(proto.Message)) error
 }
 
 // RunInfo is constant for the lifetime of one simulation run. Publishers stamp
@@ -80,4 +77,9 @@ func (b *MemoryBus) SubscribeBatched(topic, group string, onRecord func(proto.Me
 	defer b.mu.Unlock()
 	b.subs[topic] = append(b.subs[topic], memorySub{onRecord: onRecord, onBatchEnd: onBatchEnd})
 	return nil
+}
+
+// SubscribeFromNow is Subscribe, since a MemoryBus keeps no history.
+func (b *MemoryBus) SubscribeFromNow(topic string, handler func(proto.Message)) error {
+	return b.SubscribeBatched(topic, "", handler, nil)
 }

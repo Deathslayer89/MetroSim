@@ -39,10 +39,9 @@ var (
 	}, []string{"topic"})
 )
 
-// A batch whose onBatchEnd fails is retried, backing off exponentially up to the
-// cap, until it succeeds: a sink that can't write stalls its partitions rather
-// than dropping trips. Close gives the producer flushTimeout to empty and the
-// clients as long again to close. Vars so tests can shorten them.
+// A failed batch is retried, backing off up to the cap, until it succeeds.
+// Close waits flushTimeout for the flush and again for the clients. Vars so
+// tests can shorten them.
 var (
 	endBatchBaseBackoff = 100 * time.Millisecond
 	endBatchMaxBackoff  = 5 * time.Second
@@ -94,12 +93,9 @@ func New(seeds []string) (*Bus, error) {
 	return &Bus{seeds: seeds, producer: producer, ctx: ctx, cancel: cancel}, nil
 }
 
-// Close stops every consumer (waits for in-flight handlers to finish), flushes
-// records the producer still holds, then closes the Kafka clients. It waits
-// flushTimeout for the flush and as long again for the clients, then returns:
-// with the broker unreachable, a client leaving its group can otherwise wait
-// out every retry. Call before flushing any downstream writer that subscribed
-// to this bus.
+// Close stops the consumers, flushes the producer and closes the clients,
+// giving up on each step after flushTimeout. Call it before flushing a writer
+// that subscribed to this bus.
 func (b *Bus) Close() {
 	b.cancel()
 	b.wg.Wait()
@@ -122,9 +118,8 @@ func (b *Bus) Close() {
 
 type closer interface{ Close() }
 
-// closeAll closes every client at once and reports whether they all finished
-// within d. A consumer leaving its group while the broker is unreachable can
-// take as long as its retries last.
+// closeAll closes the clients concurrently and reports whether all of them
+// finished within d; leaving a group on a dead broker can take minutes.
 func closeAll(clients []closer, d time.Duration) bool {
 	var wg sync.WaitGroup
 	for _, c := range clients {
@@ -147,12 +142,9 @@ func closeAll(clients []closer, d time.Duration) bool {
 	}
 }
 
-// Publish hands msg to the producer, keyed by its Meta.PartitionKey, and
-// returns without waiting for the broker, so records batch within the linger.
-// It never blocks: with maxBuffered records already waiting, as there will be a
-// minute into a broker outage, the event is dropped, and the simulation keeps
-// its pace instead of stalling on Kafka. The client retries failed sends. A
-// record with no key is left to the partitioner.
+// Publish hands msg to the producer, keyed by Meta.PartitionKey, and never
+// waits for the broker. Once maxBuffered records are waiting, as in an outage,
+// it drops the event rather than stall the simulation.
 func (b *Bus) Publish(topic string, msg proto.Message) error {
 	data, err := proto.Marshal(msg)
 	if err != nil {
@@ -166,10 +158,8 @@ func (b *Bus) Publish(topic string, msg proto.Message) error {
 	return nil
 }
 
-// delivered runs once per record, when the broker has it or the producer gives
-// up on it. Every failure is counted, but only the first of a run is logged,
-// along with the delivery that ends it, so an outage logs two lines rather
-// than one per event.
+// delivered counts every failed record but logs only the first of a run and
+// the delivery that ends it: two lines per outage, not one per event.
 func (b *Bus) delivered(r *kgo.Record, err error) {
 	if err == nil {
 		if b.failing.Load() > 0 {
@@ -191,15 +181,19 @@ func (b *Bus) Subscribe(topic, group string, handler func(proto.Message)) error 
 	return b.SubscribeBatched(topic, group, handler, nil)
 }
 
-// SubscribeBatched calls onBatchEnd after each fetch has gone through onRecord
-// and commits the fetch only once onBatchEnd succeeds, so a crash mid-batch
-// means redelivery rather than loss. A failing onBatchEnd is retried. In a
-// group, a rebalance waits until the fetch in hand is committed, so partitions
-// never move with a batch half done; a sink failing for longer than the
-// group's rebalance timeout gets this member dropped, and its batch goes to
-// another. An empty group joins none: it reads every partition from the start
-// and commits nothing.
+// SubscribeBatched commits a fetch only after onBatchEnd succeeds, retrying
+// the batch until it does, and holds rebalances until that commit. An empty
+// group reads every partition from the start and commits nothing.
 func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message), onBatchEnd func() error) error {
+	return b.subscribe(topic, group, kgo.NewOffset().AtStart(), onRecord, onBatchEnd)
+}
+
+// SubscribeFromNow reads each partition from its newest record on, in no group.
+func (b *Bus) SubscribeFromNow(topic string, handler func(proto.Message)) error {
+	return b.subscribe(topic, "", kgo.NewOffset().AtEnd(), handler, nil)
+}
+
+func (b *Bus) subscribe(topic, group string, start kgo.Offset, onRecord func(proto.Message), onBatchEnd func() error) error {
 	factory, ok := decoderFor(topic)
 	if !ok {
 		return fmt.Errorf("no proto decoder registered for topic %q", topic)
@@ -208,7 +202,7 @@ func (b *Bus) SubscribeBatched(topic, group string, onRecord func(proto.Message)
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(b.seeds...),
 		kgo.ConsumeTopics(topic),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.ConsumeResetOffset(start),
 	}
 	if group != "" {
 		opts = append(opts, kgo.ConsumerGroup(group), kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll())
@@ -240,9 +234,8 @@ func (b *Bus) consume(client *kgo.Client, topic string, commit bool, factory fun
 	}
 }
 
-// consumeFetch polls once, then delivers and commits what came back, and
-// reports whether to keep going. A rebalance the poll held back goes ahead
-// once it returns.
+// consumeFetch handles one poll and reports whether to keep going. A
+// rebalance held back by the poll goes ahead when it returns.
 func (b *Bus) consumeFetch(client *kgo.Client, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) bool {
 	defer client.AllowRebalance()
 	fetches := client.PollFetches(b.ctx)

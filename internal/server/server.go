@@ -94,13 +94,13 @@ type ControlRequest struct {
 
 type Server struct {
 	engine     *simulation.Engine
-	hub        *wshub.Hub[struct{}]
+	hub        *wshub.Hub
 	httpServer *http.Server
 	cancel     context.CancelFunc
 }
 
 func NewServer(engine *simulation.Engine) *Server {
-	return &Server{engine: engine, hub: wshub.New[struct{}](droppedFrames)}
+	return &Server{engine: engine, hub: wshub.New(droppedFrames)}
 }
 
 // Start serves until Close is called or ListenAndServe fails.
@@ -141,7 +141,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		first = nil
 	}
-	if err := s.hub.Serve(w, r, struct{}{}, first, s.handleControl); err != nil {
+	if err := s.hub.Serve(w, r, first, s.handleControl); err != nil {
 		log.Printf("websocket: %v", err)
 	}
 }
@@ -313,6 +313,6 @@ func (s *Server) broadcast(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		s.hub.Broadcast(func(struct{}) []byte { return payload })
+		s.hub.Broadcast(payload)
 	}
 }

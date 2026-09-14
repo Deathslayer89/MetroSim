@@ -12,9 +12,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func dial(t *testing.T, srv *httptest.Server, query string, header http.Header) (*websocket.Conn, error) {
+func dial(t *testing.T, srv *httptest.Server, header http.Header) (*websocket.Conn, error) {
 	t.Helper()
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/?"+query, header)
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/", header)
 	return conn, err
 }
 
@@ -28,19 +28,23 @@ func readText(t *testing.T, conn *websocket.Conn) string {
 	return string(msg)
 }
 
-func newTestServer(hub *Hub[string], got chan<- string) *httptest.Server {
+func newTestHub() *Hub {
+	return New(prometheus.NewCounter(prometheus.CounterOpts{Name: "dropped_total", Help: "test"}))
+}
+
+func newTestServer(hub *Hub, got chan<- string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = hub.Serve(w, r, r.URL.Query().Get("tag"), []byte("hello"), func(msg []byte) { got <- string(msg) })
+		_ = hub.Serve(w, r, []byte("hello"), func(msg []byte) { got <- string(msg) })
 	}))
 }
 
 func TestHubFirstFrameBroadcastAndMessages(t *testing.T) {
-	hub := New[string](prometheus.NewCounter(prometheus.CounterOpts{Name: "dropped_total", Help: "test"}))
+	hub := newTestHub()
 	got := make(chan string, 1)
 	srv := newTestServer(hub, got)
 	defer srv.Close()
 
-	conn, err := dial(t, srv, "tag=a", nil)
+	conn, err := dial(t, srv, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -49,9 +53,9 @@ func TestHubFirstFrameBroadcastAndMessages(t *testing.T) {
 	if msg := readText(t, conn); msg != "hello" {
 		t.Fatalf("first frame: want hello, got %q", msg)
 	}
-	hub.Broadcast(func(tag string) []byte { return []byte("frame for " + tag) })
-	if msg := readText(t, conn); msg != "frame for a" {
-		t.Fatalf("broadcast: want %q, got %q", "frame for a", msg)
+	hub.Broadcast([]byte("frame"))
+	if msg := readText(t, conn); msg != "frame" {
+		t.Fatalf("broadcast: want %q, got %q", "frame", msg)
 	}
 
 	if err := conn.WriteMessage(websocket.TextMessage, []byte("pause")); err != nil {
@@ -68,18 +72,18 @@ func TestHubFirstFrameBroadcastAndMessages(t *testing.T) {
 }
 
 func TestHubRejectsCrossOrigin(t *testing.T) {
-	hub := New[string](prometheus.NewCounter(prometheus.CounterOpts{Name: "dropped_total", Help: "test"}))
+	hub := newTestHub()
 	srv := newTestServer(hub, make(chan string, 1))
 	defer srv.Close()
 
 	header := http.Header{"Origin": []string{"https://evil.example"}}
-	if conn, err := dial(t, srv, "", header); err == nil {
+	if conn, err := dial(t, srv, header); err == nil {
 		conn.Close()
 		t.Fatal("a cross-origin upgrade should be refused")
 	}
 }
 
-func clientCount[T any](h *Hub[T]) int {
+func clientCount(h *Hub) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
@@ -88,10 +92,10 @@ func clientCount[T any](h *Hub[T]) int {
 // A client that stalls gets the newest frame once it reads again, not a backlog
 // of stale ones ending before it.
 func TestSlowClientGetsTheLatestFrame(t *testing.T) {
-	hub := New[string](prometheus.NewCounter(prometheus.CounterOpts{Name: "dropped_total", Help: "test"}))
+	hub := newTestHub()
 	srv := newTestServer(hub, make(chan string, 1))
 	defer srv.Close()
-	conn, err := dial(t, srv, "", nil)
+	conn, err := dial(t, srv, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -101,7 +105,7 @@ func TestSlowClientGetsTheLatestFrame(t *testing.T) {
 	}
 
 	for i := 1; i <= 500; i++ {
-		hub.Broadcast(func(string) []byte { return []byte(fmt.Sprintf("frame-%04d", i)) })
+		hub.Broadcast([]byte(fmt.Sprintf("frame-%04d", i)))
 	}
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	for {
@@ -118,11 +122,11 @@ func TestSlowClientGetsTheLatestFrame(t *testing.T) {
 // A client that stops answering pings is dropped once its read deadline passes,
 // instead of keeping its goroutines alive.
 func TestUnresponsiveClientIsDropped(t *testing.T) {
-	hub := New[string](prometheus.NewCounter(prometheus.CounterOpts{Name: "dropped_total", Help: "test"}))
+	hub := newTestHub()
 	hub.writeWait, hub.pongWait = 100*time.Millisecond, 300*time.Millisecond
 	srv := newTestServer(hub, make(chan string, 1))
 	defer srv.Close()
-	conn, err := dial(t, srv, "", nil)
+	conn, err := dial(t, srv, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

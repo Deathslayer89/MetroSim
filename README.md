@@ -48,9 +48,9 @@ Demand comes from scenario files: a piecewise-linear arrival rate, Poisson arriv
 
 Every step of a trip (request, match, cancellation, pickup, dropoff, abandonment), every driver position and every surge change is a proto3 event. Inside one process they go over a synchronous in-memory bus. With `--bus=kafka` they go to Kafka instead, where three services pick them up:
 
-- `trace-writer` turns each consumed batch into its own Parquet file, written under a temporary name and renamed once it's synced to disk, and commits offsets only after that. If it dies mid-batch, Kafka redelivers and the trips already on disk are skipped. A write that fails is retried until it goes through; only records that can't be decoded go to a dead-letter topic.
+- `trace-writer` turns each fetch, which waits up to 10 s to fill, into its own Parquet file, written under a temporary name and renamed once it's synced to disk, and commits offsets only after that. If it dies mid-batch, Kafka redelivers and the trips already on disk are skipped, including ones another replica wrote to the same directory. A rebalance waits until the batch in hand is committed, so a joining replica never gets a half-finished one. A write that fails is retried until it goes through; only records that can't be decoded go to a dead-letter topic.
 - `metrics-aggregator` serves Prometheus metrics. Run two and they split the partitions; Prometheus adds them up.
-- `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser. It reads every topic from the start each time it launches, so a restart doesn't lose count.
+- `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser. It reads the trip and surge topics from the start each time it launches, so a restart doesn't lose count, and takes driver positions from the newest record, since every tick resends all of them.
 
 Publishing never waits for Kafka. If the broker is unreachable long enough to fill the producer's buffer, about a minute of events from 180 cars, metrosim drops further events and counts them in `metrosim_events_publish_failures_total` instead of stalling the simulation.
 
@@ -128,7 +128,7 @@ experiments/reposition/ batch with and without repositioning
 - A rider still waiting when a run stops counts with the time they had waited by then, which understates their wait. Leaving them out would flatter whichever policy strands more riders.
 - Routes are within 3x optimal by construction. In the 100-pair test the worst one took 54% longer than the best path.
 - Region sharding runs in one process. Splitting it across processes needs a way to hand off drivers near region boundaries, and that isn't written.
-- `live-view` rebuilds its whole snapshot ten times a second and sends it to every client, which won't hold up for a fleet in the tens of thousands. Replaying every topic from the start on launch also gets slower as the log grows.
+- `live-view` rebuilds its whole snapshot ten times a second and sends it to every client, which won't hold up for a fleet in the tens of thousands. Replaying the trip topics from the start on launch also gets slower as the log grows, though driver positions, most of the log, are skipped.
 - Trace dedup remembers the last 100,000 trips. A trip redelivered after it has aged out gets written twice.
 - Events published while Kafka has been unreachable for over a minute are dropped, and their trips are missing from the traces and metrics. Losing none would take a durable outbox in front of the producer.
 

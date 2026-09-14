@@ -24,7 +24,7 @@ type Server struct {
 	State        *State
 	TickInterval time.Duration
 	StaticDir    string
-	hub          *wshub.Hub[struct{}]
+	hub          *wshub.Hub
 }
 
 func NewServer(state *State, staticDir string) *Server {
@@ -32,7 +32,7 @@ func NewServer(state *State, staticDir string) *Server {
 		State:        state,
 		TickInterval: 100 * time.Millisecond,
 		StaticDir:    staticDir,
-		hub:          wshub.New[struct{}](droppedFrames),
+		hub:          wshub.New(droppedFrames),
 	}
 }
 
@@ -42,7 +42,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	if err := s.hub.Serve(w, r, struct{}{}, nil, nil); err != nil {
+	if err := s.hub.Serve(w, r, nil, nil); err != nil {
 		log.Printf("liveview: websocket: %v", err)
 	}
 }
@@ -62,6 +62,6 @@ func (s *Server) Broadcaster(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		s.hub.Broadcast(func(struct{}) []byte { return payload })
+		s.hub.Broadcast(payload)
 	}
 }

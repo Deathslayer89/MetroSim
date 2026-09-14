@@ -34,14 +34,10 @@ func keyOf(t TripInput) tripKey {
 	return tripKey{t.Scenario, t.Policy, t.Seed, t.RideID, t.RequestTs.UnixMilli(), t.DropoffTs.UnixMilli()}
 }
 
-// RollingRecorder writes per-trip rows to Parquet, one file per Kafka fetch
-// batch. Each file is written under a .tmp name, synced and renamed before its
-// batch's offsets commit, so a crash mid-batch leaves only a .tmp file, which
-// startup deletes; Kafka redelivers the batch and dedup drops trips already on
-// disk. Replicas can share a directory: before writing, a recorder reads the
-// keys from files the others have written since it last looked, so a batch
-// that one wrote and died before committing isn't written again by the replica
-// Kafka hands it to.
+// RollingRecorder writes each Kafka fetch to its own Parquet file, synced and
+// renamed from a .tmp name before the fetch commits; startup deletes leftover
+// .tmp files. It skips trips already on disk, including ones other replicas
+// sharing the directory wrote.
 type RollingRecorder struct {
 	dir         string
 	instanceTag string // unique per process; keeps restarts from clobbering each other's files

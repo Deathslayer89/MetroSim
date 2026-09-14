@@ -5,6 +5,7 @@
 package kafka
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -350,5 +351,84 @@ func TestKafkaBusBatchedFetchesWaitToFill(t *testing.T) {
 	}
 	if batches > 3 {
 		t.Errorf("%d records arrived in %d fetches", n, batches)
+	}
+}
+
+// A from-now subscriber skips what was published before it and gets what
+// comes after.
+func TestKafkaBusSubscribeFromNowSkipsHistory(t *testing.T) {
+	seeds := seedsFromEnv()
+	if !brokerReachable(seeds) {
+		t.Skipf("no broker at %v; run make kafka-up or set METROSIM_KAFKA_SEEDS", seeds)
+	}
+	pub, err := New(seeds)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pub.Close()
+	marker := time.Now().UnixNano()
+	publish := func(id int64) {
+		msg := &eventspb.DriverLocationUpdate{Meta: &eventspb.Meta{PartitionKey: fmt.Sprintf("driver:%d", id)}, DriverId: id}
+		if err := events.PublishDriverLocationUpdate(pub, msg); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+		if err := pub.producer.Flush(context.Background()); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+	}
+	for i := int64(0); i < 3; i++ {
+		publish(marker + i)
+	}
+
+	sub, err := New(seeds)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sub.Close()
+	seen := make(chan int64, 64)
+	err = events.SubscribeDriverLocationUpdateFromNow(sub, func(m *eventspb.DriverLocationUpdate) {
+		if m.DriverId >= marker && m.DriverId < marker+1000 {
+			select {
+			case seen <- m.DriverId:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	// The subscriber settles on its start offsets some time after subscribing,
+	// so keep publishing until a later record gets through.
+	got := make(map[int64]bool)
+	next := marker + 100
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.After(30 * time.Second)
+	for later := false; !later; {
+		select {
+		case id := <-seen:
+			got[id] = true
+			later = id >= marker+100
+		case <-tick.C:
+			publish(next)
+			next++
+		case <-deadline:
+			t.Fatal("nothing published after subscribing arrived")
+		}
+	}
+	time.Sleep(time.Second)
+	for drained := false; !drained; {
+		select {
+		case id := <-seen:
+			got[id] = true
+		default:
+			drained = true
+		}
+	}
+	for i := int64(0); i < 3; i++ {
+		if got[marker+i] {
+			t.Errorf("record %d, published before subscribing, arrived", i)
+		}
 	}
 }

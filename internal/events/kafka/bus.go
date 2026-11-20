@@ -48,9 +48,12 @@ var (
 	flushTimeout        = 10 * time.Second
 )
 
-// maxBuffered is how many records the producer holds for the broker before
-// Publish starts dropping events: about a minute of events from 180 cars.
-const maxBuffered = 100_000
+/**
+ * maxBuffered is how many records the producer holds for the broker before
+ * Publish starts dropping events: about a minute of events from 180 cars. A var
+ * so tests can fill it quickly.
+ */
+var maxBuffered = 100_000
 
 // A batched subscriber's fetch returns once it holds batchFetchBytes or has
 // waited batchFetchWait.

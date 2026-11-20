@@ -61,15 +61,15 @@ func TestDeliverBatchStopsWhenTheBusCloses(t *testing.T) {
 // maxBuffered, Publish has to drop events rather than block the tick that
 // publishes them, and count what it drops.
 func TestPublishDropsEventsWhenNoBrokerTakesThem(t *testing.T) {
-	timeout := flushTimeout
-	flushTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { flushTimeout = timeout })
+	timeout, buffered := flushTimeout, maxBuffered
+	flushTimeout, maxBuffered = 200*time.Millisecond, 2000
+	t.Cleanup(func() { flushTimeout, maxBuffered = timeout, buffered })
 
 	b, err := New([]string{"127.0.0.1:1"}) // nothing listens on port 1
 	if err != nil {
 		t.Fatal(err)
 	}
-	const sent = maxBuffered + 1000
+	sent := maxBuffered + 1000
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -85,10 +85,10 @@ func TestPublishDropsEventsWhenNoBrokerTakesThem(t *testing.T) {
 	}
 	// The producer reports drops from its own goroutine.
 	deadline := time.Now().Add(5 * time.Second)
-	for b.failing.Load() < sent-maxBuffered && time.Now().Before(deadline) {
+	for b.failing.Load() < int64(sent-maxBuffered) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if n := b.failing.Load(); n < sent-maxBuffered {
+	if n := b.failing.Load(); n < int64(sent-maxBuffered) {
 		t.Errorf("%d events counted as unpublished, want at least the %d past the buffer", n, sent-maxBuffered)
 	}
 }

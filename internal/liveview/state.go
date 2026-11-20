@@ -27,8 +27,12 @@ type SurgeCell struct {
 	Multiplier float64     `json:"multiplier"`
 }
 
-// Counters holds totals from trip events. Pending and Active are derived from
-// the rest and match the dispatcher once every topic is read to the same point.
+/**
+ * Counters holds totals from trip events. Pending and Active are derived from
+ * the rest and match the dispatcher once every topic is read to the same point.
+ * Each trip event type is its own topic, so a trip's later event can be read
+ * before an earlier one; the totals don't depend on that order.
+ */
 type Counters struct {
 	Requested int `json:"requested"`
 	Matched   int `json:"matched"`
@@ -41,8 +45,9 @@ type Counters struct {
 }
 
 func (c Counters) derived() Counters {
-	c.Pending = c.Requested - c.Matched + c.Cancelled - c.Abandoned
-	c.Active = c.Matched - c.Cancelled - c.Completed
+	// Clamped because a topic read ahead of the others can briefly push a derived count below zero.
+	c.Pending = max(0, c.Requested-c.Matched+c.Cancelled-c.Abandoned)
+	c.Active = max(0, c.Matched-c.Cancelled-c.Completed)
 	return c
 }
 

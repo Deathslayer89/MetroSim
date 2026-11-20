@@ -52,6 +52,8 @@ Every step of a trip (request, match, cancellation, pickup, dropoff, abandonment
 - `metrics-aggregator` serves Prometheus metrics. Run two and they split the partitions; Prometheus adds them up.
 - `live-view` rebuilds positions, surge, the request queue and ride counts from the events and pushes them to the browser. It reads the trip and surge topics from the start each time it launches, so a restart doesn't lose count, and takes driver positions from the newest record, since every tick resends all of them.
 
+Delivery is at-least-once. Each event type has its own topic, and events are keyed so one trip's events stay in order within a topic, but nothing orders a trip's `trip.matched` against its `trip.completed`. No consumer needs that order: trace-writer reads only `trip.completed`, which carries every timestamp of the trip, and live-view's counts come out the same in any order.
+
 Publishing never waits for Kafka. If the broker is unreachable long enough to fill the producer's buffer, about a minute of events from 180 cars, metrosim drops further events and counts them in `metrosim_events_publish_failures_total` instead of stalling the simulation.
 
 Smaller pieces: surge per H3 resolution-8 cell (open requests over idle drivers, clamped to 1x to 3x, smoothed over 60 s), optional driver declines and cancellations, riders who give up after `--max-wait`, a Grafana dashboard, and a ridge-regression ETA model. The ETA model is a baseline. Trained on 2,000 routed pairs it predicts free-flow trip time with an in-sample R² of 0.89, nearly all of it from distance. Surge and the ETA model can both feed into batch matching (`--surge-premium`, `--eta-weight`); both are off by default and off in the headline.

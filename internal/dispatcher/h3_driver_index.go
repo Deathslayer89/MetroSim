@@ -2,7 +2,6 @@ package dispatcher
 
 import (
 	"math"
-	"sort"
 
 	"github.com/uber/h3-go/v4"
 )
@@ -21,9 +20,11 @@ const (
 	candidateRings   = 8
 )
 
-// H3DriverIndex buckets idle drivers by H3 cell and answers NearestK via
-// grid_disk over the query cell. Falls back to exhaustive scan if the disk is
-// empty (sparse-area pickup).
+/**
+ * H3DriverIndex buckets idle drivers by H3 cell and answers NearestK via
+ * grid_disk over the query cell. Falls back to every idle driver when the disk
+ * holds fewer than k.
+ */
 type H3DriverIndex struct {
 	byCell     map[h3.Cell]map[int]struct{}
 	driverCell map[int]h3.Cell
@@ -82,50 +83,76 @@ func (idx *H3DriverIndex) NearestK(lat, lon float64, k int) []*DriverLocation {
 		return nil
 	}
 
-	candidates := make([]DriverLocation, 0, 16)
-	seen := make(map[int]struct{})
+	best := newNearest(lat, lon, k)
 	disk, err := queryCell.GridDisk(candidateRings)
 	if err != nil {
 		return nil
 	}
+	found := 0
 	for _, cell := range disk {
 		for id := range idx.byCell[cell] {
-			if _, dup := seen[id]; dup {
-				continue
-			}
-			seen[id] = struct{}{}
-			candidates = append(candidates, idx.locations[id])
+			best.offer(idx.locations[id])
+			found++
 		}
 	}
 
 	// Fewer than k within the rings, as when most cars nearby are busy: look at
 	// every idle driver, or a request settles for the one or two it found.
-	if len(candidates) < k {
-		candidates = candidates[:0]
+	if found < k {
+		best = newNearest(lat, lon, k)
 		for _, loc := range idx.locations {
-			candidates = append(candidates, loc)
-		}
-		if len(candidates) == 0 {
-			return nil
+			best.offer(loc)
 		}
 	}
+	return best.result()
+}
 
-	// Break distance ties on driver ID so map order can't change the result.
-	sort.Slice(candidates, func(i, j int) bool {
-		di := squaredDistDeg(lat, lon, candidates[i].Lat, candidates[i].Lon)
-		dj := squaredDistDeg(lat, lon, candidates[j].Lat, candidates[j].Lon)
-		if di != dj {
-			return di < dj
-		}
-		return candidates[i].ID < candidates[j].ID
-	})
+/**
+ * nearest keeps the k closest drivers offered so far, sorted, in O(k) per offer,
+ * so the full-fleet fallback costs O(n*k) rather than a sort of every idle driver.
+ * Distance ties break on driver ID so map order can't change the result.
+ */
+type nearest struct {
+	lat, lon float64
+	k        int
+	locs     []DriverLocation
+	dists    []float64
+}
 
-	if k > len(candidates) {
-		k = len(candidates)
+func newNearest(lat, lon float64, k int) *nearest {
+	return &nearest{lat: lat, lon: lon, k: k, locs: make([]DriverLocation, 0, k), dists: make([]float64, 0, k)}
+}
+
+func (n *nearest) offer(loc DriverLocation) {
+	if n.k <= 0 {
+		return
 	}
-	out := make([]*DriverLocation, k)
-	for i := 0; i < k; i++ {
-		out[i] = &candidates[i]
+	d := squaredDistDeg(n.lat, n.lon, loc.Lat, loc.Lon)
+	closer := func(i int) bool {
+		return d < n.dists[i] || (d == n.dists[i] && loc.ID < n.locs[i].ID)
+	}
+	if len(n.locs) == n.k && !closer(n.k-1) {
+		return
+	}
+	if len(n.locs) < n.k {
+		n.locs = append(n.locs, loc)
+		n.dists = append(n.dists, d)
+	}
+	i := len(n.locs) - 1
+	for i > 0 && closer(i-1) {
+		n.locs[i], n.dists[i] = n.locs[i-1], n.dists[i-1]
+		i--
+	}
+	n.locs[i], n.dists[i] = loc, d
+}
+
+func (n *nearest) result() []*DriverLocation {
+	if len(n.locs) == 0 {
+		return nil
+	}
+	out := make([]*DriverLocation, len(n.locs))
+	for i := range n.locs {
+		out[i] = &n.locs[i]
 	}
 	return out
 }

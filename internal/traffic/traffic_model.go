@@ -204,6 +204,9 @@ func (tm *TrafficModel) ComputeEdgeWeights() map[int]float64 {
 	return changed
 }
 
+// reportThreshold is the relative change in an edge's time that makes cars on it replan; smaller changes aren't worth a search.
+const reportThreshold = 0.10
+
 // noteWeight adds id to changed when w is more than 10% from the weight last
 // reported for it. It needs tm.mu held.
 func (tm *TrafficModel) noteWeight(id int, w float64, changed map[int]float64) {
@@ -214,7 +217,7 @@ func (tm *TrafficModel) noteWeight(id int, w float64, changed map[int]float64) {
 	}
 	free := w <= base*1.0001
 	switch {
-	case last > 0 && math.Abs(w-last)/last > 0.1:
+	case last > 0 && math.Abs(w-last)/last > reportThreshold:
 		changed[id] = w
 		if free {
 			delete(tm.reported, id)

@@ -307,6 +307,9 @@ func (v *Vehicle) changedAhead(changed map[int]float64) bool {
 	return false
 }
 
+// minReplanSaving is how much cheaper a new route must be to replace the current one, so two near-equal routes don't flap.
+const minReplanSaving = 0.10
+
 // replan switches to a route at least 10% cheaper than the rest of the current
 // one. Mid-edge, the current edge stays at the front and is left out of both
 // costs. It reports whether the route changed.
@@ -327,7 +330,7 @@ func (v *Vehicle) replan(weights map[int]float64) bool {
 	if err != nil {
 		return false
 	}
-	if routeCost(newRoute, weights) >= currentCost*0.9 {
+	if routeCost(newRoute, weights) >= currentCost*(1-minReplanSaving) {
 		return false
 	}
 

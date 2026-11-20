@@ -83,6 +83,9 @@ func edgeTime(ctx MatchCtx, e *graph.Edge) float64 {
 	return e.BaseWeight
 }
 
+// DefaultCandidates is how many nearest drivers each request scores by road ETA; enough that one unreachable or busy driver doesn't strand it.
+const DefaultCandidates = 5
+
 // candidates returns up to k drivers nearest to (lat, lon), leaving out any
 // who turned req down.
 func candidates(ctx MatchCtx, req *Request, lat, lon float64, k int) []*DriverLocation {
@@ -107,7 +110,7 @@ func (GreedyPolicy) Match(ctx MatchCtx) []Assignment {
 	}
 	// The nearest few by straight line, the same pool batch draws from, so a
 	// driver who is close but far by road loses to one who gets there first.
-	const greedyCandidates = 5
+	const greedyCandidates = DefaultCandidates
 	out := make([]Assignment, 0, len(ctx.Pending))
 	for _, req := range ctx.Pending {
 		pickup, err := ctx.Graph.GetNode(req.PickupNode)
@@ -173,7 +176,7 @@ func matchBatch(ctx MatchCtx, pending []*Request, candidatesPerRequest int, surg
 		}
 		k := candidatesPerRequest
 		if k <= 0 {
-			k = 5
+			k = DefaultCandidates
 		}
 		nearest := candidates(ctx, req, pickup.Lat, pickup.Lon, k)
 		ids := make([]int, 0, len(nearest))
@@ -199,6 +202,7 @@ func matchBatch(ctx MatchCtx, pending []*Request, candidatesPerRequest int, surg
 		driverIdx[d] = i
 	}
 
+	// Far above any real ETA in seconds, so the solver only picks such a cell when nothing else is left.
 	const unreachable = 1e9
 	R, D := len(pending), len(drivers)
 	N := R

@@ -37,6 +37,7 @@ type Meta struct {
 	Policy        string                 `protobuf:"bytes,4,opt,name=policy,proto3" json:"policy,omitempty"`                                 // greedy, batch or region-sharded, plus "+reposition" if on
 	Seed          int64                  `protobuf:"varint,5,opt,name=seed,proto3" json:"seed,omitempty"`                                    // scenario seed, for joining replicates
 	PartitionKey  string                 `protobuf:"bytes,6,opt,name=partition_key,json=partitionKey,proto3" json:"partition_key,omitempty"` // Kafka partition key; MemoryBus ignores
+	RunId         string                 `protobuf:"bytes,7,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`                      // random per run, so a rerun of the same seed is a different run
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -109,6 +110,13 @@ func (x *Meta) GetSeed() int64 {
 func (x *Meta) GetPartitionKey() string {
 	if x != nil {
 		return x.PartitionKey
+	}
+	return ""
+}
+
+func (x *Meta) GetRunId() string {
+	if x != nil {
+		return x.RunId
 	}
 	return ""
 }
@@ -776,14 +784,15 @@ var File_proto_events_events_proto protoreflect.FileDescriptor
 
 const file_proto_events_events_proto_rawDesc = "" +
 	"\n" +
-	"\x19proto/events/events.proto\x12\x12metrosim.events.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xbe\x01\n" +
+	"\x19proto/events/events.proto\x12\x12metrosim.events.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd5\x01\n" +
 	"\x04Meta\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\x04R\aeventId\x12.\n" +
 	"\x04time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x04time\x12\x1a\n" +
 	"\bscenario\x18\x03 \x01(\tR\bscenario\x12\x16\n" +
 	"\x06policy\x18\x04 \x01(\tR\x06policy\x12\x12\n" +
 	"\x04seed\x18\x05 \x01(\x03R\x04seed\x12#\n" +
-	"\rpartition_key\x18\x06 \x01(\tR\fpartitionKey\"\xa8\x01\n" +
+	"\rpartition_key\x18\x06 \x01(\tR\fpartitionKey\x12\x15\n" +
+	"\x06run_id\x18\a \x01(\tR\x05runId\"\xa8\x01\n" +
 	"\rTripRequested\x12,\n" +
 	"\x04meta\x18\x01 \x01(\v2\x18.metrosim.events.v1.MetaR\x04meta\x12\x1d\n" +
 	"\n" +

@@ -37,6 +37,7 @@ type RunInfo struct {
 	Scenario string
 	Policy   string
 	Seed     int64
+	RunID    string // the Stamper fills in a random one when empty
 }
 
 // MemoryBus delivers synchronously on the publisher's goroutine, which keeps

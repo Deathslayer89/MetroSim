@@ -44,6 +44,7 @@ func (r *Recorder) SubscribeToBus(bus events.Bus) {
 // TripRow is the on-disk schema. Field tags are parquet column names.
 type TripRow struct {
 	RideID          int64   `parquet:"ride_id"`
+	RunID           string  `parquet:"run_id,optional"`
 	Scenario        string  `parquet:"scenario"`
 	Policy          string  `parquet:"policy"`
 	Seed            int64   `parquet:"seed"`
@@ -67,6 +68,7 @@ type TripRow struct {
 // holds many runs.
 type TripInput struct {
 	RideID          int64
+	RunID           string
 	Scenario        string
 	Policy          string
 	Seed            int64
@@ -124,6 +126,7 @@ func (r *Recorder) Record(t TripInput) error {
 	}
 	row := TripRow{
 		RideID:          t.RideID,
+		RunID:           t.RunID,
 		Scenario:        scenario,
 		Policy:          policy,
 		Seed:            seed,

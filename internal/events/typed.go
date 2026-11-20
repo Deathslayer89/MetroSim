@@ -1,6 +1,8 @@
 package events
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,7 +23,7 @@ type Stamper struct {
 }
 
 func NewStamper(info RunInfo) *Stamper {
-	return &Stamper{info: info}
+	return &Stamper{info: withRunID(info)}
 }
 
 // SetRunInfo replaces the run metadata stamped on subsequent events. Use at
@@ -29,7 +31,17 @@ func NewStamper(info RunInfo) *Stamper {
 func (s *Stamper) SetRunInfo(info RunInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.info = info
+	s.info = withRunID(info)
+}
+
+// withRunID gives info a random 64-bit run ID if it has none.
+func withRunID(info RunInfo) RunInfo {
+	if info.RunID == "" {
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		info.RunID = hex.EncodeToString(b[:])
+	}
+	return info
 }
 
 // MetaFor returns a freshly-numbered Meta stamped at sim time t.
@@ -43,6 +55,7 @@ func (s *Stamper) MetaFor(t time.Time) *eventspb.Meta {
 		Scenario: info.Scenario,
 		Policy:   info.Policy,
 		Seed:     info.Seed,
+		RunId:    info.RunID,
 	}
 }
 

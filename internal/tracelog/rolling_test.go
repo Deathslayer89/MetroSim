@@ -29,7 +29,7 @@ func TestRollingRecorderCrashMidBatchLosesUncommittedRecords(t *testing.T) {
 	if len(files) != 0 {
 		t.Fatalf("crash test: expected no files before EndBatch, found %d", len(files))
 	}
-	partial := filepath.Join(dir, "trips_2026-01-01T00_crashed_000001.parquet.tmp")
+	partial := filepath.Join(dir, tmpDir, "trips_2026-01-01T00_crashed_000001.parquet")
 	if err := os.WriteFile(partial, []byte("PAR1 cut off"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +39,8 @@ func TestRollingRecorderCrashMidBatchLosesUncommittedRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open r2: %v", err)
 	}
-	if r2.seen.Len() != 0 {
-		t.Fatalf("r2 should see 0 ids from disk (no committed file), got %d", r2.seen.Len())
+	if r2.seen.len() != 0 {
+		t.Fatalf("r2 should see 0 ids from disk (no committed file), got %d", r2.seen.len())
 	}
 	for i := int64(1); i <= 5; i++ {
 		if err := r2.Record(testTrip(i)); err != nil {
@@ -54,7 +54,7 @@ func TestRollingRecorderCrashMidBatchLosesUncommittedRecords(t *testing.T) {
 	if got := rowsOnDisk(t, dir); got != 5 {
 		t.Errorf("after the redelivery: want 5 rows on disk, got %d", got)
 	}
-	if left, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(left) != 0 {
+	if left, _ := filepath.Glob(filepath.Join(dir, tmpDir, "*")); len(left) != 0 {
 		t.Errorf("unfinished files left behind: %v", left)
 	}
 }
@@ -102,7 +102,7 @@ func TestRollingRecorderIsIdempotentAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open r2: %v", err)
 	}
-	if got := r2.seen.Len(); got != 5 {
+	if got := r2.seen.len(); got != 5 {
 		t.Fatalf("r2 should have loaded 5 seen ids, got %d", got)
 	}
 	for i := int64(1); i <= 10; i++ {

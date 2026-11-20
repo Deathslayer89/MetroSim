@@ -20,6 +20,7 @@ message Meta {
   string policy = 4;                            // greedy, batch or region-sharded, plus "+reposition" if on
   int64 seed = 5;                               // scenario seed, for joining replicates
   string partition_key = 6;                     // Kafka partition key; MemoryBus ignores
+  string run_id = 7;                            // random per run, so a rerun of the same seed is a different run
 }
 
 message TripRequested {

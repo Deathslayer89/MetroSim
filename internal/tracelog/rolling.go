@@ -18,34 +18,49 @@ import (
 	eventspb "github.com/Deathslayer89/MetroSim/proto/events"
 )
 
-// DefaultDedupCap bounds the in-memory dedup set. Keys are evicted oldest
-// first, so a trip redelivered after its key was evicted is written twice.
+// tmpDir holds files being written, so only the final rename changes the trace directory's mtime.
+const tmpDir = ".tmp"
+
+// DefaultDedupCap is how many trip keys the dedup set keeps in memory before it evicts whole runs.
 const DefaultDedupCap = 100_000
 
-// tripKey identifies one trip record. Ride IDs restart every run, so the key
-// also carries the run's labels and the trip's request and dropoff times.
+/**
+ * tripKey identifies one trip record. Ride IDs restart every run, so the key
+ * carries the run ID. Rows written before run IDs existed have none and fall
+ * back to the run's labels and the trip's request and dropoff times.
+ */
 type tripKey struct {
-	scenario, policy     string
-	seed, rideID         int64
-	requestMs, dropoffMs int64
+	runID, scenario, policy string
+	seed, rideID            int64
+	requestMs, dropoffMs    int64
+}
+
+func (k tripKey) run() string {
+	if k.runID != "" {
+		return k.runID
+	}
+	return fmt.Sprintf("%s|%s|%d", k.scenario, k.policy, k.seed)
 }
 
 func keyOf(t TripInput) tripKey {
-	return tripKey{t.Scenario, t.Policy, t.Seed, t.RideID, t.RequestTs.UnixMilli(), t.DropoffTs.UnixMilli()}
+	return tripKey{t.RunID, t.Scenario, t.Policy, t.Seed, t.RideID, t.RequestTs.UnixMilli(), t.DropoffTs.UnixMilli()}
 }
 
-// RollingRecorder writes each Kafka fetch to its own Parquet file, synced and
-// renamed from a .tmp name before the fetch commits; startup deletes leftover
-// .tmp files. It skips trips already on disk, including ones other replicas
-// sharing the directory wrote.
+/**
+ * RollingRecorder writes each Kafka fetch to its own Parquet file, synced in
+ * dir/.tmp and renamed into dir before the fetch commits; startup deletes
+ * leftover temp files. It skips trips already on disk, including ones other
+ * replicas sharing the directory wrote.
+ */
 type RollingRecorder struct {
 	dir         string
 	instanceTag string // unique per process; keeps restarts from clobbering each other's files
 	batchSeq    atomic.Uint64
 
 	mu              sync.Mutex
-	seen            *boundedSet[tripKey]
+	seen            *seenRuns
 	scanned         map[string]bool // files, by name, whose keys are already in seen
+	dirModTime      time.Time       // the directory's mtime when last listed
 	currentBuf      []TripInput
 	currentBatchIDs map[tripKey]struct{} // keys in currentBuf, so a redelivered record isn't buffered twice
 }
@@ -58,10 +73,18 @@ func NewRollingRecorderWithCap(dir string, capacity int) (*RollingRecorder, erro
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Join(dir, tmpDir), 0o755); err != nil {
+		return nil, err
+	}
 	unfinished, err := filepath.Glob(filepath.Join(dir, "*.parquet.tmp"))
 	if err != nil {
 		return nil, err
 	}
+	inTmp, err := filepath.Glob(filepath.Join(dir, tmpDir, "*.parquet"))
+	if err != nil {
+		return nil, err
+	}
+	unfinished = append(unfinished, inTmp...)
 	for _, p := range unfinished {
 		if err := os.Remove(p); err != nil {
 			return nil, err
@@ -73,16 +96,17 @@ func NewRollingRecorderWithCap(dir string, capacity int) (*RollingRecorder, erro
 	r := &RollingRecorder{
 		dir:         dir,
 		instanceTag: fmt.Sprintf("%d", time.Now().UnixNano()),
-		seen:        newBoundedSet[tripKey](capacity),
+		seen:        newSeenRuns(capacity, readKeys),
 		scanned:     make(map[string]bool),
 	}
 	if err := r.loadSeen(); err != nil {
 		return nil, fmt.Errorf("scan %s: %w", dir, err)
 	}
-	log.Printf("rolling recorder: %s loaded %d trip keys into dedup set (cap=%d)", dir, r.seen.Len(), capacity)
+	log.Printf("rolling recorder: %s loaded %d trip keys into dedup set (cap=%d)", dir, r.seen.len(), capacity)
 	return r, nil
 }
 
+// loadSeen reads every file once, oldest first, to learn which runs each holds, so the newest runs stay resident.
 func (r *RollingRecorder) loadSeen() error {
 	files, err := filepath.Glob(filepath.Join(r.dir, "*.parquet"))
 	if err != nil {
@@ -92,57 +116,73 @@ func (r *RollingRecorder) loadSeen() error {
 		si, errI := os.Stat(files[i])
 		sj, errJ := os.Stat(files[j])
 		if errI != nil || errJ != nil {
-			return files[i] > files[j]
+			return files[i] < files[j]
 		}
-		return si.ModTime().After(sj.ModTime())
+		return si.ModTime().Before(sj.ModTime())
 	})
-	// Read the newest files until the set is full, then add them oldest first:
-	// the set evicts in insertion order, so the newest keys last longest.
-	var perFile [][]tripKey
-	total := 0
 	for _, path := range files {
-		r.scanned[filepath.Base(path)] = true
-		if total >= r.seen.capacity {
-			continue
-		}
-		keys, err := readKeys(path)
-		if err != nil {
-			log.Printf("rolling recorder: skipping %s: %v", filepath.Base(path), err)
-			continue
-		}
-		perFile = append(perFile, keys)
-		total += len(keys)
-	}
-	for i := len(perFile) - 1; i >= 0; i-- {
-		for _, k := range perFile[i] {
-			r.seen.Add(k)
+		if err := r.absorb(path); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// absorbOthers adds the keys from files that appeared since the last look,
-// which are other replicas'. It needs r.mu held.
+// absorb adds the keys of one file to seen. An unreadable file is skipped, since a crash can leave a partial one.
+func (r *RollingRecorder) absorb(path string) error {
+	r.scanned[filepath.Base(path)] = true
+	keys, err := readKeys(path)
+	if err != nil {
+		log.Printf("rolling recorder: skipping %s: %v", filepath.Base(path), err)
+		return nil
+	}
+	for _, k := range keys {
+		if err := r.seen.add(k, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *RollingRecorder) dirMod() (time.Time, error) {
+	info, err := os.Stat(r.dir)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
+}
+
+// unchangedSince reports whether the directory's mtime is still m, and old enough that a coarse clock can't hide a later change.
+func unchangedSince(now, m, known time.Time) bool {
+	return !known.IsZero() && m.Equal(known) && now.Sub(m) > time.Second
+}
+
+/**
+ * absorbOthers adds the keys from files other replicas wrote since the last
+ * look. It skips listing the directory when its mtime shows no change since
+ * then. It needs r.mu held.
+ */
 func (r *RollingRecorder) absorbOthers() error {
+	mod, err := r.dirMod()
+	if err != nil {
+		return err
+	}
+	if unchangedSince(time.Now(), mod, r.dirModTime) {
+		return nil
+	}
 	files, err := filepath.Glob(filepath.Join(r.dir, "*.parquet"))
 	if err != nil {
 		return err
 	}
 	for _, path := range files {
-		name := filepath.Base(path)
-		if r.scanned[name] {
+		if r.scanned[filepath.Base(path)] {
 			continue
 		}
-		r.scanned[name] = true
-		keys, err := readKeys(path)
-		if err != nil {
-			log.Printf("rolling recorder: skipping %s: %v", name, err)
-			continue
-		}
-		for _, k := range keys {
-			r.seen.Add(k)
+		if err := r.absorb(path); err != nil {
+			return err
 		}
 	}
+	r.dirModTime = mod
 	return nil
 }
 
@@ -170,7 +210,7 @@ func readKeys(path string) ([]tripKey, error) {
 	for {
 		n, err := reader.Read(buf)
 		for _, row := range buf[:n] {
-			keys = append(keys, tripKey{row.Scenario, row.Policy, row.Seed, row.RideID, row.RequestTsMs, row.DropoffTsMs})
+			keys = append(keys, tripKey{row.RunID, row.Scenario, row.Policy, row.Seed, row.RideID, row.RequestTsMs, row.DropoffTsMs})
 		}
 		if errors.Is(err, io.EOF) {
 			return keys, nil
@@ -188,8 +228,8 @@ func (r *RollingRecorder) Record(input TripInput) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	k := keyOf(input)
-	if r.seen.Has(k) {
-		return nil
+	if seen, err := r.seen.has(k); err != nil || seen {
+		return err
 	}
 	if r.currentBatchIDs == nil {
 		r.currentBatchIDs = make(map[tripKey]struct{})
@@ -223,7 +263,12 @@ func (r *RollingRecorder) EndBatch() error {
 	}
 	fresh := make([]TripInput, 0, len(r.currentBuf))
 	for _, t := range r.currentBuf {
-		if !r.seen.Has(keyOf(t)) {
+		seen, err := r.seen.has(keyOf(t))
+		if err != nil {
+			r.resetBatchState()
+			return fmt.Errorf("dedup: %w", err)
+		}
+		if !seen {
 			fresh = append(fresh, t)
 		}
 	}
@@ -234,8 +279,9 @@ func (r *RollingRecorder) EndBatch() error {
 
 	seq := r.batchSeq.Add(1)
 	hour := time.Now().UTC().Format("2006-01-02T15")
-	path := filepath.Join(r.dir, fmt.Sprintf("trips_%s_%s_%06d.parquet", hour, r.instanceTag, seq))
-	tmp := path + ".tmp"
+	name := fmt.Sprintf("trips_%s_%s_%06d.parquet", hour, r.instanceTag, seq)
+	path := filepath.Join(r.dir, name)
+	tmp := filepath.Join(r.dir, tmpDir, name)
 
 	rec, err := Open(tmp, "", "", 0)
 	if err != nil {
@@ -255,6 +301,7 @@ func (r *RollingRecorder) EndBatch() error {
 		r.resetBatchState()
 		return fmt.Errorf("close %s: %w", tmp, err)
 	}
+	before, statErr := r.dirMod()
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
 		r.resetBatchState()
@@ -268,7 +315,13 @@ func (r *RollingRecorder) EndBatch() error {
 	// Mark trips seen only once the footer is written.
 	r.scanned[filepath.Base(path)] = true
 	for _, t := range fresh {
-		r.seen.Add(keyOf(t))
+		if err := r.seen.add(keyOf(t), path); err != nil {
+			log.Printf("rolling recorder: %v", err)
+		}
+	}
+	// If only our rename changed the directory since the last look, the next batch needn't list it.
+	if after, err := r.dirMod(); statErr == nil && err == nil && before.Equal(r.dirModTime) {
+		r.dirModTime = after
 	}
 	r.resetBatchState()
 	return nil
@@ -300,6 +353,7 @@ func (r *RollingRecorder) SubscribeToBus(bus events.Bus) error {
 				ETAPredictedSec: c.EtaPredictedS,
 			}
 			if c.Meta != nil {
+				input.RunID = c.Meta.RunId
 				input.Scenario = c.Meta.Scenario
 				input.Policy = c.Meta.Policy
 				input.Seed = c.Meta.Seed

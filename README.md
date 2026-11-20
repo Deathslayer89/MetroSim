@@ -92,7 +92,7 @@ go run ./cmd/metrosim --bus=kafka --osm data/osm/city.osm.pbf --scenario scenari
 
 Prometheus on :9090 scrapes all three metrics endpoints, and Grafana opens on the dashboard from `dashboards/marketplace_health.json` with Prometheus already set up as its datasource.
 
-`make cluster-up` starts a three-broker version (replication factor 3, at least 2 in-sync replicas), where stopping one broker doesn't stop writes. `cmd/replay` moves a consumer group back to an earlier offset, for example to rebuild `traces/` from the log.
+`make cluster-up` starts a three-broker version (replication factor 3, at least 2 in-sync replicas), where stopping one broker doesn't stop writes. `cmd/replay` moves a consumer group to the earliest or latest offset, to the first offset after a timestamp, or to a given offset on named partitions (`--from=trip.completed:0:1200`), for example to rebuild `traces/` from the log. Prometheus and Grafana run only in the single-broker stack.
 
 Traces load straight into DuckDB:
 

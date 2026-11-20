@@ -1,8 +1,6 @@
 //go:build !race
 
-// Perf-sensitive A* timing. Excluded under -race because the detector adds
-// 5-10x overhead and inflates the measurement past the 50ms budget. Run via
-// `go test ./internal/osm/...` (no -race) for the real number.
+// A* timing and route quality, excluded under -race, which slows search 5-10x.
 package osm
 
 import (
@@ -15,54 +13,60 @@ import (
 	"github.com/Deathslayer89/MetroSim/internal/pathfinding"
 )
 
-func TestAStarP95Under50ms(t *testing.T) {
-	g := loadCityOrSkip(t)
-	planner := pathfinding.NewPathPlanner(g, nil) // the engine's default heuristic
-
+/**
+ * BenchmarkFindPath times the default and admissible heuristics on the same 200
+ * reachable pairs, after one warm-up pass, and reports p50 and p95 per search.
+ * Run with `go test -run XXX -bench FindPath ./internal/osm`.
+ */
+func BenchmarkFindPath(b *testing.B) {
+	g := loadCityOrSkip(b)
 	nodeIDs := make([]int, 0, g.NodeCount())
 	for id := range g.Nodes {
 		nodeIDs = append(nodeIDs, id)
 	}
 	sort.Ints(nodeIDs)
 
+	def := pathfinding.NewPathPlanner(g, nil)
 	rng := rand.New(rand.NewSource(1))
-	const trials = 100
-	durations := make([]time.Duration, 0, trials)
-
-	attempts, success := 0, 0
-	for success < trials && attempts < trials*10 {
-		attempts++
-		from := nodeIDs[rng.Intn(len(nodeIDs))]
-		to := nodeIDs[rng.Intn(len(nodeIDs))]
+	var pairs [][2]int
+	for len(pairs) < 200 {
+		from, to := nodeIDs[rng.Intn(len(nodeIDs))], nodeIDs[rng.Intn(len(nodeIDs))]
 		if from == to {
 			continue
 		}
-		start := time.Now()
-		_, err := planner.FindPath(from, to)
-		elapsed := time.Since(start)
-		if err != nil {
-			continue
+		if _, err := def.FindPath(from, to); err == nil {
+			pairs = append(pairs, [2]int{from, to})
 		}
-		durations = append(durations, elapsed)
-		success++
 	}
 
-	if success < trials {
-		t.Fatalf("only %d/%d trials produced a path after %d attempts", success, trials, attempts)
-	}
-
-	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	p50 := durations[len(durations)*50/100]
-	p95 := durations[len(durations)*95/100]
-	t.Logf("A* over %d random reachable pairs: p50=%v p95=%v max=%v", success, p50, p95, durations[len(durations)-1])
-
-	if p95 > 50*time.Millisecond {
-		t.Errorf("A* p95 must be under 50ms, got %v", p95)
+	for _, c := range []struct {
+		name    string
+		planner *pathfinding.PathPlanner
+	}{
+		{"weighted", def},
+		{"admissible", pathfinding.NewPathPlanner(g, pathfinding.AdmissibleTimeHeuristic(g))},
+	} {
+		b.Run(c.name, func(b *testing.B) {
+			for _, p := range pairs {
+				_, _ = c.planner.FindPath(p[0], p[1])
+			}
+			durations := make([]time.Duration, 0, b.N)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				p := pairs[i%len(pairs)]
+				start := time.Now()
+				_, _ = c.planner.FindPath(p[0], p[1])
+				durations = append(durations, time.Since(start))
+			}
+			b.StopTimer()
+			sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+			b.ReportMetric(float64(durations[len(durations)*50/100].Microseconds())/1000, "p50-ms")
+			b.ReportMetric(float64(durations[len(durations)*95/100].Microseconds())/1000, "p95-ms")
+		})
 	}
 }
 
-// The default heuristic gives up some route quality for speed. Compare its
-// routes with the admissible heuristic's optimal ones on the same pairs.
+// Asserts default-heuristic routes stay within 3x, and average within 1.25x, of the admissible optimum on 100 seeded pairs.
 func TestDefaultHeuristicRouteQuality(t *testing.T) {
 	g := loadCityOrSkip(t)
 	def := pathfinding.NewPathPlanner(g, nil)

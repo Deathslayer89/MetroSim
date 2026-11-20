@@ -11,7 +11,7 @@ import (
 
 const cityPBF = "../../data/osm/city.osm.pbf"
 
-func loadCityOrSkip(t *testing.T) *graph.Graph {
+func loadCityOrSkip(t testing.TB) *graph.Graph {
 	t.Helper()
 	if _, err := os.Stat(cityPBF); os.IsNotExist(err) {
 		t.Skipf("skipping: %s not present. Run data/osm/fetch.sh first.", cityPBF)

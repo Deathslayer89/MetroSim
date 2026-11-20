@@ -14,8 +14,9 @@ import (
 // Subscriptions go straight to the underlying bus.
 type outbox struct {
 	events.Bus
-	mu      sync.Mutex
-	pending []queued
+	mu       sync.Mutex
+	pending  []queued
+	flushing bool // one flush publishes at a time, so concurrent flushes can't interleave
 }
 
 type queued struct {
@@ -30,13 +31,26 @@ func (o *outbox) Publish(topic string, msg proto.Message) error {
 	return nil
 }
 
-// flush publishes everything queued so far, in order.
+/**
+ * flush publishes everything queued, in queue order. A call that finds another
+ * flush running returns at once and leaves its events to that flush.
+ */
 func (o *outbox) flush() {
 	o.mu.Lock()
-	batch := o.pending
-	o.pending = nil
-	o.mu.Unlock()
-	for _, q := range batch {
-		_ = o.Bus.Publish(q.topic, q.msg)
+	if o.flushing {
+		o.mu.Unlock()
+		return
 	}
+	o.flushing = true
+	for len(o.pending) > 0 {
+		batch := o.pending
+		o.pending = nil
+		o.mu.Unlock()
+		for _, q := range batch {
+			_ = o.Bus.Publish(q.topic, q.msg)
+		}
+		o.mu.Lock()
+	}
+	o.flushing = false
+	o.mu.Unlock()
 }

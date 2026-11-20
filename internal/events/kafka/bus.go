@@ -77,6 +77,8 @@ type Bus struct {
 
 	mu        sync.Mutex
 	consumers []*kgo.Client // for graceful Close
+
+	dlq func(topic string, recs []*kgo.Record) bool // replaces sendToDLQ in tests
 }
 
 // New opens a producer client connected to seeds with idempotent writes and
@@ -232,14 +234,21 @@ func (b *Bus) subscribe(topic, group string, start kgo.Offset, onRecord func(pro
 	return nil
 }
 
-func (b *Bus) consume(client *kgo.Client, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) {
+// fetcher is the part of *kgo.Client the consume loop uses.
+type fetcher interface {
+	PollFetches(ctx context.Context) kgo.Fetches
+	AllowRebalance()
+	CommitUncommittedOffsets(ctx context.Context) error
+}
+
+func (b *Bus) consume(client fetcher, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) {
 	for b.consumeFetch(client, topic, commit, factory, onRecord, onBatchEnd) {
 	}
 }
 
 // consumeFetch handles one poll and reports whether to keep going. A
 // rebalance held back by the poll goes ahead when it returns.
-func (b *Bus) consumeFetch(client *kgo.Client, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) bool {
+func (b *Bus) consumeFetch(client fetcher, topic string, commit bool, factory func() proto.Message, onRecord func(proto.Message), onBatchEnd func() error) bool {
 	defer client.AllowRebalance()
 	fetches := client.PollFetches(b.ctx)
 	if b.ctx.Err() != nil {
@@ -275,7 +284,11 @@ func (b *Bus) consumeFetch(client *kgo.Client, topic string, commit bool, factor
 	}
 	// A record that doesn't decode never will, so it goes to the DLQ. Keep at
 	// it until the DLQ takes them, since the commit below moves past them.
-	for len(dead) > 0 && !b.sendToDLQ(topic, dead) {
+	toDLQ := b.sendToDLQ
+	if b.dlq != nil {
+		toDLQ = b.dlq
+	}
+	for len(dead) > 0 && !toDLQ(topic, dead) {
 		if !b.sleep(endBatchMaxBackoff) {
 			return false
 		}
